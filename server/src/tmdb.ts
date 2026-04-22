@@ -112,25 +112,69 @@ export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {
 
 export type Monetization = "flatrate" | "rent" | "buy" | "free" | "ads";
 
-export async function* discoverByProvider(
+export type DiscoverSort =
+  | "popularity.desc"
+  | "original_title.asc"
+  | "primary_release_date.desc";
+
+async function discoverPage(
+  mediaType: MediaType,
+  providerId: number,
+  monetization: Monetization,
+  sort: DiscoverSort,
+  page: number,
+): Promise<TmdbPagedResponse<TmdbDiscoverResult>> {
+  return tmdb<TmdbPagedResponse<TmdbDiscoverResult>>(`/discover/${mediaType}`, {
+    language: config.language,
+    watch_region: config.region,
+    with_watch_providers: providerId,
+    with_watch_monetization_types: monetization,
+    sort_by: sort,
+    include_adult: "false",
+    page,
+  });
+}
+
+async function walkDiscover(
+  mediaType: MediaType,
+  providerId: number,
+  monetization: Monetization,
+  sort: DiscoverSort,
+  into: Map<number, TmdbDiscoverResult>,
+): Promise<number> {
+  let totalPages = 1;
+  let totalResults = 0;
+  for (let page = 1; page <= totalPages && page <= 500; page++) {
+    const res = await discoverPage(mediaType, providerId, monetization, sort, page);
+    totalPages = res.total_pages;
+    totalResults = res.total_results;
+    for (const item of res.results) into.set(item.id, item);
+  }
+  return totalResults;
+}
+
+/**
+ * Walk every title the given provider has for the configured region.
+ *
+ * TMDB's `sort_by=popularity.desc` is not stable across pages under sustained
+ * load: popularity scores are re-ranked while we paginate, so some titles
+ * appear on multiple pages and others get silently displaced. We walk
+ * `popularity.desc` first (fast, hot cache) and cross-check against
+ * `total_results`; if any titles are still missing, we top up with the stable
+ * alphabetical sort, then a date-based one.
+ */
+export async function discoverAllForProvider(
   mediaType: MediaType,
   providerId: number,
   monetization: Monetization = "flatrate",
-): AsyncGenerator<TmdbDiscoverResult, void, void> {
-  let page = 1;
-  let totalPages = 1;
-  do {
-    const res = await tmdb<TmdbPagedResponse<TmdbDiscoverResult>>(`/discover/${mediaType}`, {
-      language: config.language,
-      watch_region: config.region,
-      with_watch_providers: providerId,
-      with_watch_monetization_types: monetization,
-      sort_by: "popularity.desc",
-      include_adult: "false",
-      page,
-    });
-    totalPages = Math.min(res.total_pages, 500);
-    for (const item of res.results) yield item;
-    page++;
-  } while (page <= totalPages);
+): Promise<TmdbDiscoverResult[]> {
+  const seen = new Map<number, TmdbDiscoverResult>();
+  const expected = await walkDiscover(mediaType, providerId, monetization, "popularity.desc", seen);
+  if (expected > 0 && seen.size < expected) {
+    await walkDiscover(mediaType, providerId, monetization, "original_title.asc", seen);
+  }
+  if (expected > 0 && seen.size < expected) {
+    await walkDiscover(mediaType, providerId, monetization, "primary_release_date.desc", seen);
+  }
+  return [...seen.values()];
 }

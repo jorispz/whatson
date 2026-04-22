@@ -1,7 +1,7 @@
 import { db, setMeta } from "./db.js";
 import { config } from "./config.js";
 import {
-  discoverByProvider,
+  discoverAllForProvider,
   fetchGenres,
   fetchProvidersForRegion,
   type MediaType,
@@ -189,25 +189,12 @@ async function runSync(onProgress?: (p: SyncProgress) => void): Promise<SyncResu
 
   for (const provider of providers) {
     for (const mediaType of ["movie", "tv"] as MediaType[]) {
-      let count = 0;
-      const batch: TmdbDiscoverResult[] = [];
-      const BATCH_SIZE = 100;
-      const flush = (): void => {
-        if (batch.length === 0) return;
-        const tx = db.transaction((items: TmdbDiscoverResult[]) => {
-          for (const item of items) persistTitle(item, mediaType, provider.id);
-        });
-        tx(batch);
-        batch.length = 0;
-      };
-
-      for await (const item of discoverByProvider(mediaType, provider.id)) {
-        batch.push(item);
-        count++;
-        if (batch.length >= BATCH_SIZE) flush();
-      }
-      flush();
-      onProgress?.({ provider: provider.name, mediaType, count });
+      const items = await discoverAllForProvider(mediaType, provider.id);
+      const tx = db.transaction((rows: TmdbDiscoverResult[]) => {
+        for (const row of rows) persistTitle(row, mediaType, provider.id);
+      });
+      tx(items);
+      onProgress?.({ provider: provider.name, mediaType, count: items.length });
     }
   }
 
