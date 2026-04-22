@@ -15,7 +15,8 @@ const DEFAULT_FILTERS: Filters = {
   mediaTypes: [],
   providerIds: [],
   genreIds: [],
-  minRating: 6,
+  minRating: 5.5,
+  maxRating: 10,
   yearFrom: null,
   yearTo: null,
   sort: "year",
@@ -36,6 +37,27 @@ export function App(): JSX.Element {
   const reqIdRef = useRef(0);
   const { marks, getMark, toggle } = useMarks();
 
+  const markKeysByState = useMemo(() => {
+    const watchlist: string[] = [];
+    const seen: string[] = [];
+    for (const [key, mark] of Object.entries(marks)) {
+      // Local key format is "movie-123"; server expects "movie:123".
+      const serverKey = key.replace("-", ":");
+      if (mark === "watchlist") watchlist.push(serverKey);
+      else if (mark === "seen") seen.push(serverKey);
+    }
+    return { watchlist, seen };
+  }, [marks]);
+
+  const queryExtras = useMemo(() => {
+    const extras: { onlyIds?: string[]; excludeIds?: string[] } = {};
+    if (filters.watchlistOnly) extras.onlyIds = markKeysByState.watchlist;
+    if (filters.hideSeen) extras.excludeIds = markKeysByState.seen;
+    return extras;
+  }, [filters.watchlistOnly, filters.hideSeen, markKeysByState]);
+
+  const emptyByMarks = filters.watchlistOnly && markKeysByState.watchlist.length === 0;
+
   // initial load
   useEffect(() => {
     void (async (): Promise<void> => {
@@ -53,10 +75,15 @@ export function App(): JSX.Element {
   // debounced filter -> query
   useEffect(() => {
     const id = ++reqIdRef.current;
+    if (emptyByMarks) {
+      setData({ total: 0, limit: PAGE_SIZE, offset: 0, results: [] });
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const t = setTimeout(() => {
       api
-        .titles(filters, PAGE_SIZE, 0)
+        .titles(filters, PAGE_SIZE, 0, queryExtras)
         .then((res) => {
           if (reqIdRef.current === id) setData(res);
         })
@@ -68,18 +95,18 @@ export function App(): JSX.Element {
         });
     }, 250);
     return () => clearTimeout(t);
-  }, [filters]);
+  }, [filters, queryExtras, emptyByMarks]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (!data || data.results.length >= data.total || loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await api.titles(filters, PAGE_SIZE, data.results.length);
+      const next = await api.titles(filters, PAGE_SIZE, data.results.length, queryExtras);
       setData({ ...next, results: [...data.results, ...next.results] });
     } finally {
       setLoadingMore(false);
     }
-  }, [data, filters, loadingMore]);
+  }, [data, filters, loadingMore, queryExtras]);
 
   const onSync = useCallback(async (): Promise<void> => {
     setSyncError(null);
@@ -118,35 +145,19 @@ export function App(): JSX.Element {
 
   const activeFilterCount = useMemo(() => countActive(filters), [filters]);
 
-  const visibleResults = useMemo(() => {
-    if (!data) return [] as Title[];
-    return data.results.filter((t) => {
-      const key = `${t.mediaType}-${t.tmdbId}`;
-      const m = marks[key];
-      if (filters.hideSeen && m === "seen") return false;
-      if (filters.watchlistOnly && m !== "watchlist") return false;
-      return true;
-    });
-  }, [data, marks, filters.hideSeen, filters.watchlistOnly]);
-
   const surpriseMe = useCallback(async (): Promise<void> => {
+    if (emptyByMarks) return;
     try {
-      const sample = await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0);
-      const pool = sample.results.filter((t) => {
-        const m = marks[`${t.mediaType}-${t.tmdbId}`];
-        if (filters.hideSeen && m === "seen") return false;
-        if (filters.watchlistOnly && m !== "watchlist") return false;
-        return true;
-      });
-      if (pool.length === 0) return;
-      const pick = pool[Math.floor(Math.random() * pool.length)];
+      const sample = await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0, queryExtras);
+      if (sample.results.length === 0) return;
+      const pick = sample.results[Math.floor(Math.random() * sample.results.length)];
       if (pick) setSelected(pick);
     } catch (err) {
       console.error(err);
     }
-  }, [filters, marks]);
+  }, [filters, queryExtras, emptyByMarks]);
 
-  const isEmpty = !loading && data && visibleResults.length === 0;
+  const isEmpty = !loading && data && data.results.length === 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
 
   return (
@@ -168,7 +179,7 @@ export function App(): JSX.Element {
             )}
             <button
               onClick={surpriseMe}
-              disabled={!data || visibleResults.length === 0}
+              disabled={!data || data.results.length === 0}
               className="rounded px-3 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent disabled:opacity-40"
               title="Pick something random from these filters"
             >
@@ -224,11 +235,7 @@ export function App(): JSX.Element {
             <>
               <div className="flex items-center justify-between mb-3 text-sm text-mute">
                 <div>
-                  {loading
-                    ? "Loading…"
-                    : visibleResults.length === data.results.length
-                      ? `${data.total.toLocaleString()} titles`
-                      : `${visibleResults.length.toLocaleString()} shown · ${data.total.toLocaleString()} total`}
+                  {loading ? "Loading…" : `${data.total.toLocaleString()} titles`}
                   {activeFilterCount > 0 && !loading && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"}`}
                 </div>
               </div>
@@ -240,7 +247,7 @@ export function App(): JSX.Element {
               )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-                {visibleResults.map((t) => (
+                {data.results.map((t) => (
                   <TitleCard
                     key={`${t.mediaType}-${t.tmdbId}`}
                     title={t}
@@ -344,6 +351,7 @@ function countActive(f: Filters): number {
   if (f.providerIds.length > 0) n++;
   if (f.genreIds.length > 0) n++;
   if (f.minRating > 0) n++;
+  if (f.maxRating < 10) n++;
   if (f.yearFrom !== null) n++;
   if (f.yearTo !== null) n++;
   return n;

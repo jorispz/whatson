@@ -1,6 +1,16 @@
 import type { Filters, Genre, Provider, Status, TitlesResponse } from "./types";
 
-export function buildTitlesQuery(f: Filters, limit: number, offset: number): string {
+export interface TitlesQueryExtras {
+  onlyIds?: string[];
+  excludeIds?: string[];
+}
+
+export function buildTitlesQuery(
+  f: Filters,
+  limit: number,
+  offset: number,
+  extras?: TitlesQueryExtras,
+): string {
   const params = new URLSearchParams();
   if (f.q.trim()) {
     params.set("q", f.q.trim());
@@ -10,8 +20,11 @@ export function buildTitlesQuery(f: Filters, limit: number, offset: number): str
   if (f.providerIds.length > 0) params.set("providers", f.providerIds.join(","));
   if (f.genreIds.length > 0) params.set("genres", f.genreIds.join(","));
   if (f.minRating > 0) params.set("minRating", String(f.minRating));
+  if (f.maxRating < 10) params.set("maxRating", String(f.maxRating));
   if (f.yearFrom !== null) params.set("yearFrom", String(f.yearFrom));
   if (f.yearTo !== null) params.set("yearTo", String(f.yearTo));
+  if (extras?.onlyIds && extras.onlyIds.length > 0) params.set("onlyIds", extras.onlyIds.join(","));
+  if (extras?.excludeIds && extras.excludeIds.length > 0) params.set("excludeIds", extras.excludeIds.join(","));
   params.set("sort", f.sort);
   params.set("limit", String(limit));
   params.set("offset", String(offset));
@@ -25,8 +38,8 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  titles: (f: Filters, limit: number, offset: number): Promise<TitlesResponse> =>
-    fetchJson<TitlesResponse>(`/api/titles?${buildTitlesQuery(f, limit, offset)}`),
+  titles: (f: Filters, limit: number, offset: number, extras?: TitlesQueryExtras): Promise<TitlesResponse> =>
+    fetchJson<TitlesResponse>(`/api/titles?${buildTitlesQuery(f, limit, offset, extras)}`),
   providers: (): Promise<Provider[]> => fetchJson<Provider[]>("/api/providers"),
   genres: (): Promise<Genre[]> => fetchJson<Genre[]>("/api/genres"),
   status: (): Promise<Status> => fetchJson<Status>("/api/status"),

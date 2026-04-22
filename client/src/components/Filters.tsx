@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import type { Filters, Genre, MediaType, Provider, SortKey } from "../types";
 
 interface Props {
@@ -65,37 +66,11 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
         </div>
       </Section>
 
-      <Section label="Service">
-        <div className="flex flex-col gap-1.5">
-          {providers.map((p) => (
-            <label
-              key={p.id}
-              className="flex items-center gap-2 cursor-pointer hover:text-ink text-mute"
-            >
-              <input
-                type="checkbox"
-                checked={filters.providerIds.includes(p.id)}
-                onChange={() => toggleProvider(p.id)}
-                className="accent-accent"
-              />
-              {p.logo_path && (
-                <img src={`https://image.tmdb.org/t/p/w45${p.logo_path}`} alt="" className="h-4 w-4 rounded" />
-              )}
-              <span className={filters.providerIds.includes(p.id) ? "text-ink" : ""}>{p.name}</span>
-            </label>
-          ))}
-        </div>
-      </Section>
-
-      <Section label={`Minimum rating: ${filters.minRating.toFixed(1)}`}>
-        <input
-          type="range"
-          min={0}
-          max={9}
-          step={0.5}
-          value={filters.minRating}
-          onChange={(e) => onChange({ minRating: Number(e.target.value) })}
-          className="w-full accent-accent"
+      <Section label={`Rating: ${filters.minRating.toFixed(1)} – ${filters.maxRating.toFixed(1)}`}>
+        <RatingRange
+          min={filters.minRating}
+          max={filters.maxRating}
+          onChange={(lo, hi) => onChange({ minRating: lo, maxRating: hi })}
         />
       </Section>
 
@@ -164,6 +139,28 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
         </select>
       </Section>
 
+      <Section label="Service">
+        <div className="flex flex-col gap-1.5">
+          {providers.map((p) => (
+            <label
+              key={p.id}
+              className="flex items-center gap-2 cursor-pointer hover:text-ink text-mute"
+            >
+              <input
+                type="checkbox"
+                checked={filters.providerIds.includes(p.id)}
+                onChange={() => toggleProvider(p.id)}
+                className="accent-accent"
+              />
+              {p.logo_path && (
+                <img src={`https://image.tmdb.org/t/p/w45${p.logo_path}`} alt="" className="h-4 w-4 rounded" />
+              )}
+              <span className={filters.providerIds.includes(p.id) ? "text-ink" : ""}>{p.name}</span>
+            </label>
+          ))}
+        </div>
+      </Section>
+
       <button onClick={onReset} className="text-xs text-mute hover:text-ink underline self-start">
         Reset filters
       </button>
@@ -202,6 +199,95 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+const RATING_STEP = 0.5;
+const RATING_MAX = 10;
+
+function RatingRange({
+  min,
+  max,
+  onChange,
+}: {
+  min: number;
+  max: number;
+  onChange: (lo: number, hi: number) => void;
+}): JSX.Element {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; lo: number; hi: number; width: number } | null>(null);
+
+  const loPct = (min / RATING_MAX) * 100;
+  const hiPct = (max / RATING_MAX) * 100;
+
+  const snap = (v: number): number => Math.round(v / RATING_STEP) * RATING_STEP;
+
+  const onFillDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const track = trackRef.current;
+    if (!track) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragStart({ x: e.clientX, lo: min, hi: max, width: track.getBoundingClientRect().width });
+  };
+
+  const onFillMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragStart) return;
+    const deltaVal = ((e.clientX - dragStart.x) / dragStart.width) * RATING_MAX;
+    const span = dragStart.hi - dragStart.lo;
+    let newLo = dragStart.lo + deltaVal;
+    let newHi = dragStart.hi + deltaVal;
+    if (newLo < 0) {
+      newLo = 0;
+      newHi = span;
+    }
+    if (newHi > RATING_MAX) {
+      newHi = RATING_MAX;
+      newLo = RATING_MAX - span;
+    }
+    onChange(snap(newLo), snap(newHi));
+  };
+
+  const onFillUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    setDragStart(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  return (
+    <div ref={trackRef} className="range-dual">
+      <div className="absolute inset-x-0 h-1 bg-panel2 rounded-full" />
+      <div
+        className="absolute h-full flex items-center cursor-grab active:cursor-grabbing"
+        style={{
+          left: `${loPct}%`,
+          right: `${100 - hiPct}%`,
+          touchAction: "none",
+        }}
+        onPointerDown={onFillDown}
+        onPointerMove={onFillMove}
+        onPointerUp={onFillUp}
+        onPointerCancel={onFillUp}
+        aria-label="Drag to shift rating range"
+      >
+        <div className="h-1 w-full bg-accent rounded-full" />
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={RATING_MAX}
+        step={RATING_STEP}
+        value={min}
+        onChange={(e) => onChange(Math.min(Number(e.target.value), max), max)}
+        aria-label="Minimum rating"
+      />
+      <input
+        type="range"
+        min={0}
+        max={RATING_MAX}
+        step={RATING_STEP}
+        value={max}
+        onChange={(e) => onChange(min, Math.max(Number(e.target.value), min))}
+        aria-label="Maximum rating"
+      />
+    </div>
   );
 }
 

@@ -54,6 +54,19 @@ function parseCsvInt(s: unknown): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
+function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number }[] {
+  return parseCsv(s)
+    .map((pair) => {
+      const [mt, idRaw] = pair.split(":");
+      const id = Number(idRaw);
+      if ((mt === "movie" || mt === "tv") && Number.isFinite(id)) {
+        return { mediaType: mt, id };
+      }
+      return null;
+    })
+    .filter((x): x is { mediaType: "movie" | "tv"; id: number } => x !== null);
+}
+
 const trailerCache = new Map<string, { key: string | null; expires: number }>();
 const TRAILER_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -124,6 +137,7 @@ api.get("/titles", (req, res) => {
   const providerIds = parseCsvInt(req.query.providers);
   const genreIds = parseCsvInt(req.query.genres);
   const minRating = req.query.minRating !== undefined ? Number(req.query.minRating) : null;
+  const maxRating = req.query.maxRating !== undefined ? Number(req.query.maxRating) : null;
   const minVotes = req.query.minVotes !== undefined ? Number(req.query.minVotes) : 50;
   const yearFrom = req.query.yearFrom !== undefined ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo !== undefined ? Number(req.query.yearTo) : null;
@@ -156,6 +170,10 @@ api.get("/titles", (req, res) => {
     where.push("t.vote_average >= @minRating");
     params.minRating = minRating;
   }
+  if (maxRating !== null && Number.isFinite(maxRating)) {
+    where.push("t.vote_average <= @maxRating");
+    params.maxRating = maxRating;
+  }
   if (Number.isFinite(minVotes) && minVotes > 0) {
     where.push("t.vote_count >= @minVotes");
     params.minVotes = minVotes;
@@ -184,6 +202,32 @@ api.get("/titles", (req, res) => {
         AND tg.genre_id IN (${genreIds.map((_, i) => `@g${i}`).join(",")})
     )`);
     genreIds.forEach((v, i) => (params[`g${i}`] = v));
+  }
+
+  const onlyKeys = parseCompositeKeys(req.query.onlyIds);
+  if (onlyKeys.length > 0) {
+    where.push(
+      `(${onlyKeys
+        .map((_, i) => `(t.media_type = @om${i} AND t.tmdb_id = @oi${i})`)
+        .join(" OR ")})`,
+    );
+    onlyKeys.forEach((k, i) => {
+      params[`om${i}`] = k.mediaType;
+      params[`oi${i}`] = k.id;
+    });
+  }
+
+  const excludeKeys = parseCompositeKeys(req.query.excludeIds);
+  if (excludeKeys.length > 0) {
+    where.push(
+      `NOT (${excludeKeys
+        .map((_, i) => `(t.media_type = @xm${i} AND t.tmdb_id = @xi${i})`)
+        .join(" OR ")})`,
+    );
+    excludeKeys.forEach((k, i) => {
+      params[`xm${i}`] = k.mediaType;
+      params[`xi${i}`] = k.id;
+    });
   }
 
   const orderBy =
