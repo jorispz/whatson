@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(kill b5wh8b5m4 *)",
+      "WebFetch(domain:www.disneyplus.com)"
+    ]
+  }
+}

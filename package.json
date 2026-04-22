@@ -1,0 +1,20 @@
+{
+  "name": "whatson",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browse what's on Netflix, Disney+ and HBO Max NL",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev -w server\" \"npm:dev -w client\"",
+    "build": "npm run build -w server && npm run build -w client",
+    "start": "npm run start -w server",
+    "sync": "npm run sync -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
