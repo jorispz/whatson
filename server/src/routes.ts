@@ -226,9 +226,12 @@ api.get("/titles", (req, res) => {
   const yearFrom = req.query.yearFrom !== undefined ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo !== undefined ? Number(req.query.yearTo) : null;
   const sort =
-    typeof req.query.sort === "string" && ["popularity", "rating", "year", "title"].includes(req.query.sort)
-      ? (req.query.sort as "popularity" | "rating" | "year" | "title")
+    typeof req.query.sort === "string" &&
+    ["popularity", "rating", "year", "title", "random"].includes(req.query.sort)
+      ? (req.query.sort as "popularity" | "rating" | "year" | "title" | "random")
       : "popularity";
+  const randomSeed =
+    sort === "random" && req.query.randomSeed !== undefined ? Number(req.query.randomSeed) || 1 : 1;
   const limit = Math.min(Math.max(Number(req.query.limit ?? 60), 1), 200);
   const offset = Math.max(Number(req.query.offset ?? 0), 0);
 
@@ -321,7 +324,10 @@ api.get("/titles", (req, res) => {
         ? "t.release_year DESC NULLS LAST, t.popularity DESC"
         : sort === "title"
           ? "t.title COLLATE NOCASE ASC"
-          : "t.popularity DESC";
+          : sort === "random"
+            ? "(((t.tmdb_id + @randomSeed) * 2654435761) & 2147483647)"
+            : "t.popularity DESC";
+  if (sort === "random") params.randomSeed = randomSeed;
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 

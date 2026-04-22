@@ -21,6 +21,7 @@ function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Prop
 
   return (
     <div
+      style={{ contentVisibility: "auto", containIntrinsicSize: "420px" }}
       className={`group relative flex flex-col rounded-lg overflow-hidden bg-panel hover:bg-panel2 transition-colors ring-1 hover:ring-accent/50 ${
         mark === "seen" ? "ring-emerald-500/40 opacity-70" : mark === "watchlist" ? "ring-accent/50" : "ring-white/5"
       }`}
@@ -39,7 +40,13 @@ function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Prop
       >
       <div className="aspect-[2/3] w-full bg-panel2 relative">
         {poster ? (
-          <img src={poster} alt={title.title} className="h-full w-full object-cover" loading="lazy" />
+          <img
+            src={poster}
+            alt={title.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <div className="flex items-center justify-center h-full text-mute text-sm">No image</div>
         )}

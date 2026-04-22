@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Filters, Genre, MediaType, Provider, SortKey } from "../types";
+import type { Filters, Genre, MediaType, Provider } from "../types";
 
 interface Props {
   filters: Filters;
@@ -8,13 +8,6 @@ interface Props {
   onChange: (patch: Partial<Filters>) => void;
   onReset: () => void;
 }
-
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: "popularity", label: "Popularity" },
-  { value: "rating", label: "Rating" },
-  { value: "year", label: "Newest" },
-  { value: "title", label: "Title A–Z" },
-];
 
 export function FiltersPanel({ filters, providers, genres, onChange, onReset }: Props): JSX.Element {
   const mergedGenres = mergeGenres(genres);
@@ -102,41 +95,6 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
             </Chip>
           ))}
         </div>
-      </Section>
-
-      <Section label="Your list">
-        <label className="flex items-center gap-2 text-mute hover:text-ink cursor-pointer">
-          <input
-            type="checkbox"
-            checked={filters.watchlistOnly}
-            onChange={(e) => onChange({ watchlistOnly: e.target.checked })}
-            className="accent-accent"
-          />
-          <span className={filters.watchlistOnly ? "text-ink" : ""}>Show only my watchlist</span>
-        </label>
-        <label className="flex items-center gap-2 text-mute hover:text-ink cursor-pointer mt-1">
-          <input
-            type="checkbox"
-            checked={filters.hideSeen}
-            onChange={(e) => onChange({ hideSeen: e.target.checked })}
-            className="accent-accent"
-          />
-          <span className={filters.hideSeen ? "text-ink" : ""}>Hide seen</span>
-        </label>
-      </Section>
-
-      <Section label="Sort by">
-        <select
-          value={filters.sort}
-          onChange={(e) => onChange({ sort: e.target.value as SortKey })}
-          className="w-full bg-panel2 rounded px-2 py-1.5 ring-1 ring-white/10 outline-none focus:ring-accent"
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
       </Section>
 
       <Section label="Service">

@@ -26,6 +26,7 @@ export function buildTitlesQuery(
   if (extras?.onlyIds && extras.onlyIds.length > 0) params.set("onlyIds", extras.onlyIds.join(","));
   if (extras?.excludeIds && extras.excludeIds.length > 0) params.set("excludeIds", extras.excludeIds.join(","));
   params.set("sort", f.sort);
+  if (f.sort === "random") params.set("randomSeed", String(f.randomSeed));
   params.set("limit", String(limit));
   params.set("offset", String(offset));
   return params.toString();

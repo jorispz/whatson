@@ -43,7 +43,7 @@ export interface Status {
   syncing: boolean;
 }
 
-export type SortKey = "popularity" | "rating" | "year" | "title";
+export type SortKey = "popularity" | "rating" | "year" | "title" | "random";
 
 export interface Filters {
   q: string;
@@ -56,6 +56,7 @@ export interface Filters {
   yearFrom: number | null;
   yearTo: number | null;
   sort: SortKey;
+  randomSeed: number;
   hideSeen: boolean;
   watchlistOnly: boolean;
 }
