@@ -44,7 +44,7 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
             onChange={(e) => onChange({ includeOverview: e.target.checked })}
             className="accent-accent"
           />
-          <span className={filters.includeOverview ? "text-ink" : ""}>Include overview</span>
+          <span className={filters.includeOverview ? "text-ink" : ""}>Also search in summary</span>
         </label>
       </div>
 
@@ -88,7 +88,7 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
       </Section>
 
       <Section label="Genre">
-        <div className="flex flex-wrap gap-1.5 max-h-64 overflow-y-auto">
+        <div className="flex flex-wrap gap-1.5">
           {mergedGenres.map((g) => (
             <Chip key={g.id} active={filters.genreIds.includes(g.id)} onClick={() => toggleGenre(g.id)} small>
               {g.name}
