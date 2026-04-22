@@ -112,56 +112,13 @@ export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {
 
 export type Monetization = "flatrate" | "rent" | "buy" | "free" | "ads";
 
-export type DiscoverSort =
-  | "popularity.desc"
-  | "original_title.asc"
-  | "primary_release_date.desc";
-
-async function discoverPage(
-  mediaType: MediaType,
-  providerId: number,
-  monetization: Monetization,
-  sort: DiscoverSort,
-  page: number,
-): Promise<TmdbPagedResponse<TmdbDiscoverResult>> {
-  return tmdb<TmdbPagedResponse<TmdbDiscoverResult>>(`/discover/${mediaType}`, {
-    language: config.language,
-    watch_region: config.region,
-    with_watch_providers: providerId,
-    with_watch_monetization_types: monetization,
-    sort_by: sort,
-    include_adult: "false",
-    page,
-  });
-}
-
-async function walkDiscover(
-  mediaType: MediaType,
-  providerId: number,
-  monetization: Monetization,
-  sort: DiscoverSort,
-  into: Map<number, TmdbDiscoverResult>,
-): Promise<number> {
-  let totalPages = 1;
-  let totalResults = 0;
-  for (let page = 1; page <= totalPages && page <= 500; page++) {
-    const res = await discoverPage(mediaType, providerId, monetization, sort, page);
-    totalPages = res.total_pages;
-    totalResults = res.total_results;
-    for (const item of res.results) into.set(item.id, item);
-  }
-  return totalResults;
-}
-
 /**
  * Walk every title the given provider has for the configured region.
  *
- * TMDB's `sort_by=popularity.desc` is not stable across pages under sustained
- * load: popularity scores are re-ranked while we paginate, so some titles
- * appear on multiple pages and others get silently displaced. We walk
- * `popularity.desc` first (fast, hot cache) and cross-check against
- * `total_results`; if any titles are still missing, we top up with the stable
- * alphabetical sort, then a date-based one.
+ * We sort by `original_title.asc` (alphabetical) — NOT `popularity.desc`,
+ * which TMDB re-ranks mid-walk causing duplicate titles across pages and
+ * silently displacing unique ones. Alphabetical order is stable, so a
+ * single walk yields every title exactly once.
  */
 export async function discoverAllForProvider(
   mediaType: MediaType,
@@ -169,12 +126,19 @@ export async function discoverAllForProvider(
   monetization: Monetization = "flatrate",
 ): Promise<TmdbDiscoverResult[]> {
   const seen = new Map<number, TmdbDiscoverResult>();
-  const expected = await walkDiscover(mediaType, providerId, monetization, "popularity.desc", seen);
-  if (expected > 0 && seen.size < expected) {
-    await walkDiscover(mediaType, providerId, monetization, "original_title.asc", seen);
-  }
-  if (expected > 0 && seen.size < expected) {
-    await walkDiscover(mediaType, providerId, monetization, "primary_release_date.desc", seen);
+  let totalPages = 1;
+  for (let page = 1; page <= totalPages && page <= 500; page++) {
+    const res = await tmdb<TmdbPagedResponse<TmdbDiscoverResult>>(`/discover/${mediaType}`, {
+      language: config.language,
+      watch_region: config.region,
+      with_watch_providers: providerId,
+      with_watch_monetization_types: monetization,
+      sort_by: "original_title.asc",
+      include_adult: "false",
+      page,
+    });
+    totalPages = res.total_pages;
+    for (const item of res.results) seen.set(item.id, item);
   }
   return [...seen.values()];
 }
