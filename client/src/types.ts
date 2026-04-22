@@ -47,6 +47,7 @@ export type SortKey = "popularity" | "rating" | "year" | "title";
 
 export interface Filters {
   q: string;
+  includeOverview: boolean;
   mediaTypes: MediaType[];
   providerIds: number[];
   genreIds: number[];

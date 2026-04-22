@@ -119,6 +119,7 @@ api.post("/sync", async (_req, res) => {
 
 api.get("/titles", (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const includeOverview = req.query.includeOverview === "true" || req.query.includeOverview === "1";
   const mediaTypes = parseCsv(req.query.mediaType).filter((x): x is "movie" | "tv" => x === "movie" || x === "tv");
   const providerIds = parseCsvInt(req.query.providers);
   const genreIds = parseCsvInt(req.query.genres);
@@ -137,8 +138,15 @@ api.get("/titles", (req, res) => {
   const params: Record<string, unknown> = {};
 
   if (q) {
-    where.push("(t.title LIKE @q OR t.original_title LIKE @q)");
-    params.q = `%${q}%`;
+    const terms = q.split(/\s+/).filter(Boolean).slice(0, 8);
+    terms.forEach((term, i) => {
+      const paramName = `q${i}`;
+      const fields = includeOverview
+        ? `t.title LIKE @${paramName} OR t.original_title LIKE @${paramName} OR t.overview LIKE @${paramName}`
+        : `t.title LIKE @${paramName} OR t.original_title LIKE @${paramName}`;
+      where.push(`(${fields})`);
+      params[paramName] = `%${term}%`;
+    });
   }
   if (mediaTypes.length > 0) {
     where.push(`t.media_type IN (${mediaTypes.map((_, i) => `@mt${i}`).join(",")})`);

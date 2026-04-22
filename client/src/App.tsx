@@ -11,6 +11,7 @@ const SURPRISE_SAMPLE_SIZE = 500;
 
 const DEFAULT_FILTERS: Filters = {
   q: "",
+  includeOverview: false,
   mediaTypes: [],
   providerIds: [],
   genreIds: [],

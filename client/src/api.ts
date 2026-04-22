@@ -2,7 +2,10 @@ import type { Filters, Genre, Provider, Status, TitlesResponse } from "./types";
 
 export function buildTitlesQuery(f: Filters, limit: number, offset: number): string {
   const params = new URLSearchParams();
-  if (f.q.trim()) params.set("q", f.q.trim());
+  if (f.q.trim()) {
+    params.set("q", f.q.trim());
+    if (f.includeOverview) params.set("includeOverview", "true");
+  }
   if (f.mediaTypes.length > 0) params.set("mediaType", f.mediaTypes.join(","));
   if (f.providerIds.length > 0) params.set("providers", f.providerIds.join(","));
   if (f.genreIds.length > 0) params.set("genres", f.genreIds.join(","));

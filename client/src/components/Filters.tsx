@@ -43,6 +43,15 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
           placeholder="Search title…"
           className="w-full bg-panel2 rounded-md px-3 py-2 ring-1 ring-white/10 focus:ring-accent outline-none"
         />
+        <label className="flex items-center gap-2 mt-2 text-xs text-mute hover:text-ink cursor-pointer">
+          <input
+            type="checkbox"
+            checked={filters.includeOverview}
+            onChange={(e) => onChange({ includeOverview: e.target.checked })}
+            className="accent-accent"
+          />
+          <span className={filters.includeOverview ? "text-ink" : ""}>Include overview</span>
+        </label>
       </div>
 
       <Section label="Type">
