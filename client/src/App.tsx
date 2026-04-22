@@ -10,7 +10,7 @@ const PAGE_SIZE = 60;
 const SURPRISE_SAMPLE_SIZE = 500;
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: "year", label: "Newest" },
+  { value: "year", label: "Release date" },
   { value: "popularity", label: "Popularity" },
   { value: "rating", label: "Rating" },
   { value: "title", label: "Title A–Z" },

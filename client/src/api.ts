@@ -66,6 +66,7 @@ export function serviceSearchUrl(
     case "hboMax":
       return `https://play.max.com/search/result?q=${encodeURIComponent(title.title)}`;
     case "disneyPlus":
+    case "ziggoTv":
       return `https://www.themoviedb.org/${title.mediaType}/${title.tmdbId}/watch?locale=NL`;
     default:
       return null;

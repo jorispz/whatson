@@ -110,9 +110,12 @@ export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {
   return sorted[0] ?? null;
 }
 
+export type Monetization = "flatrate" | "rent" | "buy" | "free" | "ads";
+
 export async function* discoverByProvider(
   mediaType: MediaType,
   providerId: number,
+  monetization: Monetization = "flatrate",
 ): AsyncGenerator<TmdbDiscoverResult, void, void> {
   let page = 1;
   let totalPages = 1;
@@ -121,7 +124,7 @@ export async function* discoverByProvider(
       language: config.language,
       watch_region: config.region,
       with_watch_providers: providerId,
-      with_watch_monetization_types: "flatrate",
+      with_watch_monetization_types: monetization,
       sort_by: "popularity.desc",
       include_adult: "false",
       page,

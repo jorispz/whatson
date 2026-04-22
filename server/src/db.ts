@@ -46,6 +46,7 @@ db.exec(`
     tmdb_id     INTEGER NOT NULL,
     media_type  TEXT    NOT NULL,
     provider_id INTEGER NOT NULL,
+    monetization TEXT  NOT NULL DEFAULT 'flatrate',
     PRIMARY KEY (tmdb_id, media_type, provider_id),
     FOREIGN KEY (tmdb_id, media_type) REFERENCES titles(tmdb_id, media_type) ON DELETE CASCADE
   );
@@ -71,6 +72,16 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+// Migration: add monetization column to pre-existing availability tables. CREATE TABLE
+// IF NOT EXISTS above is a no-op when the table already exists, so we need an explicit
+// ALTER. Must happen before any index referencing the column is created.
+const availabilityCols = db.prepare("PRAGMA table_info(availability)").all() as { name: string }[];
+if (!availabilityCols.some((c) => c.name === "monetization")) {
+  db.exec(`ALTER TABLE availability ADD COLUMN monetization TEXT NOT NULL DEFAULT 'flatrate'`);
+}
+
+db.exec(`CREATE INDEX IF NOT EXISTS idx_availability_monetization ON availability(monetization)`);
 
 export function setMeta(key: string, value: string): void {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(

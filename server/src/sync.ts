@@ -9,7 +9,7 @@ import {
   type TmdbProvider,
 } from "./tmdb.js";
 
-const PROVIDER_KEYS = ["netflix", "disneyPlus", "hboMax"] as const;
+const PROVIDER_KEYS = ["netflix", "disneyPlus", "hboMax", "ziggoTv"] as const;
 type ProviderKey = (typeof PROVIDER_KEYS)[number];
 
 interface ResolvedProvider {
@@ -91,7 +91,7 @@ const insertTitleGenre = db.prepare(
   `INSERT OR IGNORE INTO title_genres (tmdb_id, media_type, genre_id) VALUES (?, ?, ?)`,
 );
 const insertAvailability = db.prepare(
-  `INSERT OR IGNORE INTO availability (tmdb_id, media_type, provider_id) VALUES (?, ?, ?)`,
+  `INSERT OR IGNORE INTO availability (tmdb_id, media_type, provider_id, monetization) VALUES (?, ?, ?, ?)`,
 );
 
 function persistTitle(item: TmdbDiscoverResult, mediaType: MediaType, providerId: number): void {
@@ -120,7 +120,7 @@ function persistTitle(item: TmdbDiscoverResult, mediaType: MediaType, providerId
     insertTitleGenre.run(item.id, mediaType, genreId);
   }
 
-  insertAvailability.run(item.id, mediaType, providerId);
+  insertAvailability.run(item.id, mediaType, providerId, "flatrate");
 }
 
 async function syncGenres(): Promise<void> {

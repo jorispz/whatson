@@ -122,9 +122,15 @@ api.get("/recommendations/:mediaType/:id", async (req, res) => {
         (SELECT GROUP_CONCAT(genre_id) FROM title_genres tg
           WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type) AS genre_ids,
         (SELECT GROUP_CONCAT(provider_id) FROM availability av
-          WHERE av.tmdb_id = t.tmdb_id AND av.media_type = t.media_type) AS provider_ids
+          WHERE av.tmdb_id = t.tmdb_id AND av.media_type = t.media_type
+            AND av.monetization = 'flatrate') AS provider_ids
       FROM titles t
       WHERE t.media_type = @mt AND t.tmdb_id IN (${placeholders})
+        AND EXISTS (
+          SELECT 1 FROM availability av
+          WHERE av.tmdb_id = t.tmdb_id AND av.media_type = t.media_type
+            AND av.monetization = 'flatrate'
+        )
     `,
     )
     .all(params) as TitleRow[];
