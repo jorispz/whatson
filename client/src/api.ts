@@ -1,4 +1,4 @@
-import type { Filters, Genre, Provider, Status, TitlesResponse } from "./types";
+import type { Filters, Genre, Provider, Status, Title, TitlesResponse } from "./types";
 
 export interface TitlesQueryExtras {
   onlyIds?: string[];
@@ -46,6 +46,8 @@ export const api = {
   sync: (): Promise<{ started: boolean }> => fetchJson("/api/sync", { method: "POST" }),
   trailer: (mediaType: "movie" | "tv", id: number): Promise<{ youtubeKey: string | null }> =>
     fetchJson(`/api/trailer/${mediaType}/${id}`),
+  recommendations: (mediaType: "movie" | "tv", id: number): Promise<{ results: Title[] }> =>
+    fetchJson(`/api/recommendations/${mediaType}/${id}`),
 };
 
 export const posterUrl = (path: string | null, size: "w185" | "w342" | "w500" = "w342"): string | null =>

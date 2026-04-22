@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Genre, Provider, Title } from "../types";
 import { api, posterUrl, serviceSearchUrl } from "../api";
 import { useMarks } from "../marks";
@@ -15,13 +15,22 @@ interface Props {
   providers: Provider[];
   genres: Genre[];
   onClose: () => void;
+  onSelect: (title: Title) => void;
 }
 
-export function TitleModal({ title, providers, genres, onClose }: Props): JSX.Element {
+export function TitleModal({ title, providers, genres, onClose, onSelect }: Props): JSX.Element {
   const [trailerKey, setTrailerKey] = useState<string | null | undefined>(undefined);
   const [playing, setPlaying] = useState(false);
+  const [recs, setRecs] = useState<Title[] | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { getMark, toggle } = useMarks();
   const mark = getMark(title);
+
+  // When the selected title changes (e.g. via a recommendation), scroll the
+  // modal back to the top so the user sees the new content.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [title.mediaType, title.tmdbId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -35,6 +44,7 @@ export function TitleModal({ title, providers, genres, onClose }: Props): JSX.El
     let cancelled = false;
     setTrailerKey(undefined);
     setPlaying(false);
+    setRecs(null);
     api
       .trailer(title.mediaType, title.tmdbId)
       .then((res) => {
@@ -42,6 +52,14 @@ export function TitleModal({ title, providers, genres, onClose }: Props): JSX.El
       })
       .catch(() => {
         if (!cancelled) setTrailerKey(null);
+      });
+    api
+      .recommendations(title.mediaType, title.tmdbId)
+      .then((res) => {
+        if (!cancelled) setRecs(res.results);
+      })
+      .catch(() => {
+        if (!cancelled) setRecs([]);
       });
     return () => {
       cancelled = true;
@@ -60,9 +78,11 @@ export function TitleModal({ title, providers, genres, onClose }: Props): JSX.El
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto"
+      ref={scrollRef}
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
       onClick={onClose}
     >
+      <div className="min-h-full flex items-start sm:items-center justify-center p-4">
       <div
         className="bg-panel rounded-xl overflow-hidden max-w-3xl w-full shadow-2xl ring-1 ring-white/10"
         onClick={(e) => e.stopPropagation()}
@@ -233,6 +253,44 @@ export function TitleModal({ title, providers, genres, onClose }: Props): JSX.El
             </div>
           </div>
         </div>
+
+        {recs && recs.length > 0 && (
+          <div className="border-t border-white/5 px-6 py-4">
+            <div className="text-xs uppercase tracking-wider text-mute mb-3">More like this</div>
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {recs.map((r) => (
+                <button
+                  key={`${r.mediaType}-${r.tmdbId}`}
+                  onClick={() => onSelect(r)}
+                  className="shrink-0 w-28 text-left rounded-md overflow-hidden bg-panel2 ring-1 ring-white/5 hover:ring-accent/60 transition-colors"
+                  title={r.title}
+                >
+                  <div className="aspect-[2/3] bg-panel2">
+                    {r.posterPath ? (
+                      <img
+                        src={`https://image.tmdb.org/t/p/w185${r.posterPath}`}
+                        alt={r.title}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-xs text-mute">No image</div>
+                    )}
+                  </div>
+                  <div className="p-2">
+                    <div className="text-xs font-medium line-clamp-2 leading-snug">{r.title}</div>
+                    <div className="text-[10px] text-mute mt-0.5 flex items-center gap-1.5">
+                      <span>{r.releaseYear ?? "—"}</span>
+                      <span className="text-yellow-400">★</span>
+                      <span>{r.voteAverage.toFixed(1)}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
       </div>
     </div>
   );

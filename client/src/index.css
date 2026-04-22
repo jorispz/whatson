@@ -61,6 +61,12 @@ body { background: #0b0d12; }
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
+/* Suppress hover repaint-thrash while scrolling. Applied via body class
+   from a short-lived scroll listener. */
+body.is-scrolling * {
+  pointer-events: none !important;
+}
+
 /* Custom scrollbar in dark panels */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }

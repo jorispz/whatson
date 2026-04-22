@@ -58,6 +58,26 @@ export function App(): JSX.Element {
 
   const emptyByMarks = filters.watchlistOnly && markKeysByState.watchlist.length === 0;
 
+  // While scrolling, disable pointer events site-wide so hover states don't
+  // trigger on each card the cursor passes over — avoids scroll shimmer.
+  useEffect(() => {
+    let timeoutId: number | null = null;
+    const onScroll = (): void => {
+      document.body.classList.add("is-scrolling");
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        document.body.classList.remove("is-scrolling");
+        timeoutId = null;
+      }, 150);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      document.body.classList.remove("is-scrolling");
+    };
+  }, []);
+
   // initial load
   useEffect(() => {
     void (async (): Promise<void> => {
@@ -288,6 +308,7 @@ export function App(): JSX.Element {
           providers={providers}
           genres={genres}
           onClose={() => setSelected(null)}
+          onSelect={setSelected}
         />
       )}
     </div>

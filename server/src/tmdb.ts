@@ -82,6 +82,14 @@ export interface TmdbVideo {
   name: string;
 }
 
+export async function fetchRecommendations(mediaType: MediaType, id: number): Promise<number[]> {
+  const res = await tmdb<{ results: { id: number }[] }>(`/${mediaType}/${id}/recommendations`, {
+    language: config.language,
+    page: 1,
+  });
+  return res.results.map((r) => r.id);
+}
+
 export async function fetchVideos(mediaType: MediaType, id: number): Promise<TmdbVideo[]> {
   const res = await tmdb<{ results: TmdbVideo[] }>(`/${mediaType}/${id}/videos`, { language: config.language });
   return res.results;

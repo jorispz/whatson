@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
-import { fetchVideos, pickBestTrailer } from "./tmdb.js";
+import { fetchRecommendations, fetchVideos, pickBestTrailer } from "./tmdb.js";
 
 export const api = Router();
 
@@ -69,6 +69,90 @@ function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number
 
 const trailerCache = new Map<string, { key: string | null; expires: number }>();
 const TRAILER_TTL_MS = 24 * 60 * 60 * 1000;
+
+const recsCache = new Map<string, { ids: number[]; expires: number }>();
+const RECS_TTL_MS = 24 * 60 * 60 * 1000;
+const RECS_MAX = 12;
+
+api.get("/recommendations/:mediaType/:id", async (req, res) => {
+  const { mediaType, id: idRaw } = req.params;
+  if (mediaType !== "movie" && mediaType !== "tv") {
+    res.status(400).json({ error: "invalid mediaType" });
+    return;
+  }
+  const id = Number(idRaw);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const cacheKey = `${mediaType}:${id}`;
+  let ids: number[];
+  const cached = recsCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    ids = cached.ids;
+  } else {
+    try {
+      ids = await fetchRecommendations(mediaType, id);
+      recsCache.set(cacheKey, { ids, expires: Date.now() + RECS_TTL_MS });
+    } catch (err) {
+      console.error("recommendations fetch failed:", err);
+      res.status(502).json({ error: "upstream error" });
+      return;
+    }
+  }
+
+  if (ids.length === 0) {
+    res.json({ results: [] });
+    return;
+  }
+
+  // Intersect with our local catalog so we only return titles available on the user's services.
+  // Preserve TMDB's ordering (which reflects their recommendation strength).
+  const placeholders = ids.map((_, i) => `@id${i}`).join(",");
+  const params: Record<string, unknown> = { mt: mediaType };
+  ids.forEach((v, i) => (params[`id${i}`] = v));
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        t.tmdb_id, t.media_type, t.title, t.overview, t.release_date, t.release_year,
+        t.poster_path, t.backdrop_path, t.vote_average, t.vote_count, t.popularity,
+        t.original_language,
+        (SELECT GROUP_CONCAT(genre_id) FROM title_genres tg
+          WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type) AS genre_ids,
+        (SELECT GROUP_CONCAT(provider_id) FROM availability av
+          WHERE av.tmdb_id = t.tmdb_id AND av.media_type = t.media_type) AS provider_ids
+      FROM titles t
+      WHERE t.media_type = @mt AND t.tmdb_id IN (${placeholders})
+    `,
+    )
+    .all(params) as TitleRow[];
+
+  const byId = new Map(rows.map((r) => [r.tmdb_id, r]));
+  const ordered = ids
+    .map((tmdbId) => byId.get(tmdbId))
+    .filter((r): r is TitleRow => r !== undefined)
+    .slice(0, RECS_MAX)
+    .map((r) => ({
+      tmdbId: r.tmdb_id,
+      mediaType: r.media_type,
+      title: r.title,
+      overview: r.overview,
+      releaseDate: r.release_date,
+      releaseYear: r.release_year,
+      posterPath: r.poster_path,
+      backdropPath: r.backdrop_path,
+      voteAverage: r.vote_average,
+      voteCount: r.vote_count,
+      popularity: r.popularity,
+      originalLanguage: r.original_language,
+      genreIds: parseIntList(r.genre_ids),
+      providerIds: parseIntList(r.provider_ids),
+    }));
+
+  res.json({ results: ordered });
+});
 
 api.get("/trailer/:mediaType/:id", async (req, res) => {
   const { mediaType, id: idRaw } = req.params;
