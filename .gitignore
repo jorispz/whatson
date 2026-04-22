@@ -49,6 +49,9 @@ coverage/
 *.swo
 *~
 
+# Claude Code local-only state (per-project permissions, session data)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db
