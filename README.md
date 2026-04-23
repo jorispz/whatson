@@ -1,11 +1,13 @@
 # whatson
 
-Local web app to browse what's available on your Netflix, Disney+, and HBO Max subscriptions in the Netherlands. Data from TMDB.
+Local web app to browse what's available on your Netflix, Disney+, HBO Max, and Ziggo TV subscriptions in the Netherlands. Data from TMDB.
+
+![whatson screenshot](docs/screenshot.png)
 
 ## Setup
 
-1. Get a free TMDB API key at https://www.themoviedb.org/settings/api (v3 auth, the shorter one).
-2. Copy `.env.example` to `.env` and paste your key.
+1. Get a free TMDB API Read Access Token at https://www.themoviedb.org/settings/api (v4 auth, the long JWT-style one).
+2. Copy `.env.example` to `.env` and paste the token into `TMDB_ACCESS_TOKEN`.
 3. Install dependencies:
    ```
    npm install
