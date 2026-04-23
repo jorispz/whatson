@@ -12,20 +12,17 @@ Local web app to browse what's available on your Netflix, Disney+, HBO Max, and 
    ```
    npm install
    ```
-4. Populate the local catalog (first sync takes a couple of minutes):
-   ```
-   npm run sync
-   ```
-5. Start the app:
+4. Start the app:
    ```
    npm run dev
    ```
-   Then open http://localhost:5173.
+   Then open http://localhost:5173. The server syncs the catalog from TMDB
+   automatically on first run (takes under a minute); refreshes on a 24h
+   timer after that, plus whenever you click "Refresh" in the UI.
 
 ## Commands
 
 - `npm run dev` — start server + Vite dev server with HMR
-- `npm run sync` — refresh the local catalog from TMDB
 - `npm run build` — production build
 - `npm start` — run the production server (serves built client)
 
