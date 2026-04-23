@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Genre, Provider, Title } from "../types";
-import { api, posterUrl, serviceSearchUrl } from "../api";
+import { api, openServiceLink, posterUrl } from "../api";
 import { useMarks } from "../marks";
 
 function reviewSearchUrl(title: string, year: number | null, mediaType: "movie" | "tv"): string {
@@ -8,6 +8,13 @@ function reviewSearchUrl(title: string, year: number | null, mediaType: "movie" 
   if (year) parts.push(String(year));
   parts.push(mediaType === "tv" ? "series review" : "review");
   return `https://kagi.com/search?q=${encodeURIComponent(parts.join(" "))}`;
+}
+
+function formatRuntime(min: number): string {
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 interface Props {
@@ -20,6 +27,7 @@ interface Props {
 
 export function TitleModal({ title, providers, genres, onClose, onSelect }: Props): JSX.Element {
   const [trailerKey, setTrailerKey] = useState<string | null | undefined>(undefined);
+  const [runtime, setRuntime] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -43,12 +51,15 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   useEffect(() => {
     let cancelled = false;
     setTrailerKey(undefined);
+    setRuntime(null);
     setPlaying(false);
     setRecs(null);
     api
-      .trailer(title.mediaType, title.tmdbId)
+      .details(title.mediaType, title.tmdbId)
       .then((res) => {
-        if (!cancelled) setTrailerKey(res.youtubeKey);
+        if (cancelled) return;
+        setTrailerKey(res.youtubeKey);
+        setRuntime(res.runtime);
       })
       .catch(() => {
         if (!cancelled) setTrailerKey(null);
@@ -75,6 +86,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
 
   const backdrop = title.backdropPath ? `https://image.tmdb.org/t/p/w780${title.backdropPath}` : null;
   const poster = posterUrl(title.posterPath, "w342");
+  const hasHeader = backdrop || playing;
 
   return (
     <div
@@ -87,7 +99,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
         className="bg-panel rounded-xl overflow-hidden max-w-3xl w-full shadow-2xl ring-1 ring-white/10"
         onClick={(e) => e.stopPropagation()}
       >
-        {(backdrop || playing) && (
+        {hasHeader && (
           <div className="aspect-video bg-panel2 relative">
             {playing && trailerKey ? (
               <iframe
@@ -126,7 +138,9 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
             <img
               src={poster}
               alt={title.title}
-              className="hidden sm:block w-40 self-start rounded-md shadow-lg ring-1 ring-white/10 -mt-20 relative"
+              className={`hidden sm:block w-40 self-start rounded-md shadow-lg ring-1 ring-white/10 relative ${
+                hasHeader ? "-mt-20" : ""
+              }`}
             />
           )}
           <div className="flex-1 min-w-0">
@@ -141,6 +155,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                     {title.voteAverage.toFixed(1)}
                     <span className="text-mute">({title.voteCount.toLocaleString()})</span>
                   </span>
+                  {runtime !== null && <span>{formatRuntime(runtime)}</span>}
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -195,40 +210,9 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
               <div className="mt-5">
                 <div className="text-xs uppercase tracking-wider text-mute mb-2">Available on</div>
                 <div className="flex gap-2 flex-wrap">
-                  {services.map((s) => {
-                    const url = serviceSearchUrl(s.key, title);
-                    const content = (
-                      <>
-                        {s.logo_path && (
-                          <img
-                            src={`https://image.tmdb.org/t/p/w45${s.logo_path}`}
-                            alt=""
-                            className="h-5 w-5 rounded"
-                          />
-                        )}
-                        <span className="text-sm">{s.name}</span>
-                        {url && <span className="text-xs text-mute">↗</span>}
-                      </>
-                    );
-                    const className =
-                      "flex items-center gap-2 bg-panel2 px-3 py-1.5 rounded-lg ring-1 ring-white/10 transition-colors hover:bg-panel2/70 hover:ring-accent";
-                    return url ? (
-                      <a
-                        key={s.id}
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={className}
-                        title={`Search ${s.name}`}
-                      >
-                        {content}
-                      </a>
-                    ) : (
-                      <div key={s.id} className={className}>
-                        {content}
-                      </div>
-                    );
-                  })}
+                  {services.map((s) => (
+                    <ServiceButton key={s.id} service={s} title={title} />
+                  ))}
                 </div>
               </div>
             )}
@@ -293,5 +277,37 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
       </div>
       </div>
     </div>
+  );
+}
+
+function ServiceButton({ service, title }: { service: Provider; title: Title }): JSX.Element {
+  const [resolving, setResolving] = useState(false);
+  const onClick = async (): Promise<void> => {
+    if (resolving) return;
+    setResolving(true);
+    try {
+      await openServiceLink(title, service.key);
+    } finally {
+      setResolving(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={resolving}
+      title={`Open ${title.title} on ${service.name}`}
+      className="flex items-center gap-2 bg-panel2 px-3 py-1.5 rounded-lg ring-1 ring-white/10 transition-colors hover:bg-panel2/70 hover:ring-accent disabled:opacity-70"
+    >
+      {resolving ? (
+        <span className="whatson-spinner text-mute" style={{ fontSize: "16px" }} aria-label="Opening…" />
+      ) : (
+        service.logo_path && (
+          <img src={`https://image.tmdb.org/t/p/w45${service.logo_path}`} alt="" className="h-5 w-5 rounded" />
+        )
+      )}
+      <span className="text-sm">{service.name}</span>
+      {!resolving && <span className="text-xs text-mute">↗</span>}
+    </button>
   );
 }

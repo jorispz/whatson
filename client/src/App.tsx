@@ -19,6 +19,11 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 
 const newSeed = (): number => Math.floor(Math.random() * 2_000_000_000) + 1;
 
+const dateSeed = (): number => {
+  const d = new Date();
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+};
+
 const DEFAULT_FILTERS: Filters = {
   q: "",
   includeOverview: false,
@@ -31,8 +36,8 @@ const DEFAULT_FILTERS: Filters = {
   maxVotes: null,
   yearFrom: null,
   yearTo: null,
-  sort: "year",
-  randomSeed: 1,
+  sort: "random",
+  randomSeed: dateSeed(),
   hideSeen: false,
   watchlistOnly: false,
 };
@@ -103,6 +108,12 @@ export function App(): JSX.Element {
     })();
   }, []);
 
+  // Any filter change replaces the result set — scroll back to the top so the
+  // new results aren't hidden below the previous scroll position.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [filters, queryExtras]);
+
   // debounced filter -> query
   useEffect(() => {
     const id = ++reqIdRef.current;
@@ -172,7 +183,7 @@ export function App(): JSX.Element {
     setFilters((f) => ({ ...f, ...patch }));
   }, []);
 
-  const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
+  const resetFilters = useCallback(() => setFilters({ ...DEFAULT_FILTERS, randomSeed: dateSeed() }), []);
 
   const activeFilterCount = useMemo(() => countActive(filters), [filters]);
 

@@ -47,17 +47,26 @@ export const api = {
   genres: (): Promise<Genre[]> => fetchJson<Genre[]>("/api/genres"),
   status: (): Promise<Status> => fetchJson<Status>("/api/status"),
   sync: (): Promise<{ started: boolean }> => fetchJson("/api/sync", { method: "POST" }),
-  trailer: (mediaType: "movie" | "tv", id: number): Promise<{ youtubeKey: string | null }> =>
-    fetchJson(`/api/trailer/${mediaType}/${id}`),
+  details: (
+    mediaType: "movie" | "tv",
+    id: number,
+  ): Promise<{ youtubeKey: string | null; runtime: number | null }> =>
+    fetchJson(`/api/details/${mediaType}/${id}`),
   recommendations: (mediaType: "movie" | "tv", id: number): Promise<{ results: Title[] }> =>
     fetchJson(`/api/recommendations/${mediaType}/${id}`),
+  deeplink: (
+    mediaType: "movie" | "tv",
+    id: number,
+    providerKey: string,
+  ): Promise<{ url: string | null }> => fetchJson(`/api/deeplink/${mediaType}/${id}/${providerKey}`),
 };
 
 export const posterUrl = (path: string | null, size: "w185" | "w342" | "w500" = "w342"): string | null =>
   path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
 
-// Per-service links. Netflix and Max honor search query params; Disney+'s SPA drops them,
-// so we fall back to TMDB's JustWatch-powered watch page for that one.
+// Fallback URLs used if the on-click deep-link resolver fails. Netflix and Max
+// honor search query params; Disney+'s SPA drops them, so we fall back to TMDB's
+// JustWatch-powered watch page for that one.
 export function serviceSearchUrl(
   providerKey: string,
   title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
@@ -73,4 +82,36 @@ export function serviceSearchUrl(
     default:
       return null;
   }
+}
+
+/**
+ * Resolve a proper deep link via the server (extracts the direct URL from
+ * TMDB's watch-page HTML) and open it in a new tab. Falls back to the
+ * service's search URL if the resolver returns null or errors.
+ *
+ * Uses a programmatic anchor-click rather than window.open, because
+ * `window.open(url, "_blank", "noopener")` returns null in Chrome/Safari —
+ * which would make any return-value check misread the success as a blocked
+ * popup and navigate the current tab on top of the new one.
+ */
+export async function openServiceLink(
+  title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
+  providerKey: string,
+): Promise<void> {
+  let url: string | null = null;
+  try {
+    const res = await api.deeplink(title.mediaType, title.tmdbId, providerKey);
+    url = res.url;
+  } catch {
+    /* fall through to fallback */
+  }
+  if (!url) url = serviceSearchUrl(providerKey, title);
+  if (!url) return;
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }

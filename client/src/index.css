@@ -61,6 +61,20 @@ body { background: #0b0d12; }
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
+/* Tiny inline spinner for async-resolving badges/buttons. */
+.whatson-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: whatson-spin 0.6s linear infinite;
+}
+@keyframes whatson-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Suppress hover repaint-thrash while scrolling. Applied via body class
    from a short-lived scroll listener. */
 body.is-scrolling * {

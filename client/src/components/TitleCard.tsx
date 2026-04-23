@@ -1,6 +1,6 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { Provider, Title } from "../types";
-import { posterUrl, serviceSearchUrl } from "../api";
+import { openServiceLink, posterUrl } from "../api";
 import type { Mark } from "../marks";
 
 interface Props {
@@ -131,32 +131,38 @@ function MarkButton({
 }
 
 function ProviderBadge({ provider, title }: { provider: Provider; title: Title }): JSX.Element {
+  const [resolving, setResolving] = useState(false);
   const logo = provider.logo_path ? `https://image.tmdb.org/t/p/w45${provider.logo_path}` : null;
-  const url = serviceSearchUrl(provider.key, title);
   const className =
-    "inline-flex items-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10 hover:ring-accent transition-colors";
-  const inner = logo ? (
-    <img src={logo} alt={provider.name} className="h-full w-full object-cover" />
-  ) : (
-    <span className="text-[9px] text-mute w-full text-center">{provider.name.slice(0, 2)}</span>
-  );
-  if (!url) {
-    return (
-      <span title={provider.name} className={className}>
-        {inner}
-      </span>
-    );
-  }
+    "inline-flex items-center justify-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10 hover:ring-accent transition-colors disabled:opacity-70";
+
+  const onClick = async (e: React.MouseEvent): Promise<void> => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (resolving) return;
+    setResolving(true);
+    try {
+      await openServiceLink(title, provider.key);
+    } finally {
+      setResolving(false);
+    }
+  };
+
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={resolving}
       title={`Open on ${provider.name}`}
-      onClick={(e) => e.stopPropagation()}
       className={className}
     >
-      {inner}
-    </a>
+      {resolving ? (
+        <span className="whatson-spinner text-mute" style={{ fontSize: "14px" }} aria-label="Opening…" />
+      ) : logo ? (
+        <img src={logo} alt={provider.name} className="h-full w-full object-cover" />
+      ) : (
+        <span className="text-[9px] text-mute w-full text-center">{provider.name.slice(0, 2)}</span>
+      )}
+    </button>
   );
 }

@@ -90,9 +90,25 @@ export async function fetchRecommendations(mediaType: MediaType, id: number): Pr
   return res.results.map((r) => r.id);
 }
 
-export async function fetchVideos(mediaType: MediaType, id: number): Promise<TmdbVideo[]> {
-  const res = await tmdb<{ results: TmdbVideo[] }>(`/${mediaType}/${id}/videos`, { language: config.language });
-  return res.results;
+export interface TmdbTitleDetails {
+  videos: TmdbVideo[];
+  runtime: number | null;
+}
+
+export async function fetchTitleDetails(mediaType: MediaType, id: number): Promise<TmdbTitleDetails> {
+  const res = await tmdb<{
+    runtime?: number;
+    episode_run_time?: number[];
+    videos?: { results: TmdbVideo[] };
+  }>(`/${mediaType}/${id}`, { language: config.language, append_to_response: "videos" });
+  let runtime: number | null = null;
+  if (mediaType === "movie") {
+    if (typeof res.runtime === "number" && res.runtime > 0) runtime = res.runtime;
+  } else {
+    const first = res.episode_run_time?.[0];
+    if (typeof first === "number" && first > 0) runtime = first;
+  }
+  return { videos: res.videos?.results ?? [], runtime };
 }
 
 export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {

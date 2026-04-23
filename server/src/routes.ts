@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
-import { fetchRecommendations, fetchVideos, pickBestTrailer } from "./tmdb.js";
+import { fetchRecommendations, fetchTitleDetails, pickBestTrailer } from "./tmdb.js";
 
 export const api = Router();
 
@@ -67,12 +67,176 @@ function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number
     .filter((x): x is { mediaType: "movie" | "tv"; id: number } => x !== null);
 }
 
-const trailerCache = new Map<string, { key: string | null; expires: number }>();
-const TRAILER_TTL_MS = 24 * 60 * 60 * 1000;
+const detailsCache = new Map<string, { youtubeKey: string | null; runtime: number | null; expires: number }>();
+const DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const recsCache = new Map<string, { ids: number[]; expires: number }>();
 const RECS_TTL_MS = 24 * 60 * 60 * 1000;
 const RECS_MAX = 12;
+
+// Monetization preference when picking a JustWatch clickout URL for a title:
+// subscription-included beats paid options.
+const MONETIZATION_RANK: Record<string, number> = {
+  flatrate: 5,
+  free: 4,
+  ads: 3,
+  rent: 2,
+  buy: 1,
+};
+
+interface JustWatchCxData {
+  providerId?: number;
+  monetizationType?: string;
+}
+
+/**
+ * Scan a TMDB watch-page HTML snippet for JustWatch clickout URLs pointing at
+ * the requested TMDB provider id. Returns the target URL (decoded from the
+ * clickout's `&r=` param) with the highest monetization rank, or null if no
+ * match is found. The `&r=` target is often still an affiliate tracker one
+ * hop removed from the provider (e.g. `disneyplus.bn5x.net`) — see
+ * `resolveRedirects` for the follow-up that finds the true provider URL.
+ */
+function pickDirectUrl(html: string, providerId: number): string | null {
+  const re = /href="https:\/\/click\.justwatch\.com\/a\?cx=([^&"]+)&r=([^"&]+)(?:&[^"]*)?"/g;
+  let best: { target: string; rank: number } | null = null;
+  for (const m of html.matchAll(re)) {
+    const cxRaw = m[1];
+    const rRaw = m[2];
+    if (!cxRaw || !rRaw) continue;
+    try {
+      const decoded = JSON.parse(Buffer.from(cxRaw, "base64").toString("utf8")) as {
+        data?: { data?: JustWatchCxData }[];
+      };
+      const entry = decoded.data?.[0]?.data;
+      if (!entry || entry.providerId !== providerId) continue;
+      const rank = MONETIZATION_RANK[entry.monetizationType ?? ""] ?? 0;
+      if (!best || rank > best.rank) {
+        best = { target: decodeURIComponent(rRaw), rank };
+      }
+    } catch {
+      /* not a parseable cx, skip */
+    }
+  }
+  return best?.target ?? null;
+}
+
+/**
+ * Hosts and a search-URL builder per provider key. Used to verify that
+ * redirect resolution actually landed on the streamer and, when it didn't,
+ * to fall back to the streamer's on-site search.
+ */
+interface ProviderSite {
+  hosts: string[];
+  search: (query: string) => string;
+}
+
+const PROVIDER_SITES: Record<string, ProviderSite> = {
+  netflix: {
+    hosts: ["netflix.com"],
+    search: (q) => `https://www.netflix.com/search?q=${encodeURIComponent(q)}`,
+  },
+  disneyPlus: {
+    hosts: ["disneyplus.com"],
+    search: (q) => `https://www.disneyplus.com/search?q=${encodeURIComponent(q)}`,
+  },
+  hboMax: {
+    hosts: ["max.com", "hbomax.com"],
+    search: (q) => `https://play.max.com/search?q=${encodeURIComponent(q)}`,
+  },
+  ziggoTv: {
+    hosts: ["ziggo.tv", "ziggogo.tv"],
+    search: (q) => `https://www.ziggogo.tv/search?q=${encodeURIComponent(q)}`,
+  },
+};
+
+function matchesProviderHost(url: string, site: ProviderSite): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return site.hosts.some((h) => host === h || host.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Follow HTTP redirects to find the final URL. JustWatch's `&r=` target is
+ * commonly an affiliate tracker (bn5x.net, prf.hn, etc.) that redirects again
+ * to the real provider page; ad-blockers block those hosts, breaking the
+ * click flow. Returns the resolved URL, or the input URL if resolution fails.
+ */
+async function resolveRedirects(url: string, timeoutMs = 5000): Promise<string> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: ac.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+    return res.url || url;
+  } catch {
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
+  const { mediaType, id: idRaw, providerKey } = req.params;
+  if (mediaType !== "movie" && mediaType !== "tv") {
+    res.status(400).json({ error: "invalid mediaType" });
+    return;
+  }
+  const id = Number(idRaw);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const providerRow = db
+    .prepare("SELECT id FROM providers WHERE key = ?")
+    .get(providerKey) as { id: number } | undefined;
+  if (!providerRow) {
+    res.status(400).json({ error: "unknown providerKey" });
+    return;
+  }
+
+  try {
+    const page = await fetch(`https://www.themoviedb.org/${mediaType}/${id}/watch?locale=NL`, {
+      headers: {
+        "User-Agent": "whatson/0.1 (personal non-commercial)",
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "en,en-US;q=0.9",
+      },
+    });
+    if (!page.ok) {
+      console.error("deeplink fetch failed:", page.status, page.statusText);
+      res.status(502).json({ error: "upstream error" });
+      return;
+    }
+    const html = await page.text();
+    const clickoutTarget = pickDirectUrl(html, providerRow.id);
+    let url = clickoutTarget ? await resolveRedirects(clickoutTarget) : null;
+    const site = PROVIDER_SITES[providerKey];
+    if (site && (!url || !matchesProviderHost(url, site))) {
+      const titleRow = db
+        .prepare("SELECT title FROM titles WHERE tmdb_id = ? AND media_type = ?")
+        .get(id, mediaType) as { title: string } | undefined;
+      if (titleRow?.title) {
+        url = site.search(titleRow.title);
+      }
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error("deeplink resolve failed:", err);
+    res.status(502).json({ error: "upstream error" });
+  }
+});
 
 api.get("/recommendations/:mediaType/:id", async (req, res) => {
   const { mediaType, id: idRaw } = req.params;
@@ -160,7 +324,7 @@ api.get("/recommendations/:mediaType/:id", async (req, res) => {
   res.json({ results: ordered });
 });
 
-api.get("/trailer/:mediaType/:id", async (req, res) => {
+api.get("/details/:mediaType/:id", async (req, res) => {
   const { mediaType, id: idRaw } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -172,19 +336,19 @@ api.get("/trailer/:mediaType/:id", async (req, res) => {
     return;
   }
   const cacheKey = `${mediaType}:${id}`;
-  const cached = trailerCache.get(cacheKey);
+  const cached = detailsCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
-    res.json({ youtubeKey: cached.key });
+    res.json({ youtubeKey: cached.youtubeKey, runtime: cached.runtime });
     return;
   }
   try {
-    const videos = await fetchVideos(mediaType, id);
-    const trailer = pickBestTrailer(videos);
-    const key = trailer?.key ?? null;
-    trailerCache.set(cacheKey, { key, expires: Date.now() + TRAILER_TTL_MS });
-    res.json({ youtubeKey: key });
+    const details = await fetchTitleDetails(mediaType, id);
+    const trailer = pickBestTrailer(details.videos);
+    const youtubeKey = trailer?.key ?? null;
+    detailsCache.set(cacheKey, { youtubeKey, runtime: details.runtime, expires: Date.now() + DETAILS_TTL_MS });
+    res.json({ youtubeKey, runtime: details.runtime });
   } catch (err) {
-    console.error("trailer fetch failed:", err);
+    console.error("details fetch failed:", err);
     res.status(502).json({ error: "upstream error" });
   }
 });
