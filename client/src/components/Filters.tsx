@@ -67,6 +67,14 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
         />
       </Section>
 
+      <Section label={`Votes: ${formatVotesRange(filters.minVotes, filters.maxVotes)}`}>
+        <VotesRange
+          minVotes={filters.minVotes}
+          maxVotes={filters.maxVotes}
+          onChange={(lo, hi) => onChange({ minVotes: lo, maxVotes: hi })}
+        />
+      </Section>
+
       <Section label="Year">
         <div className="flex gap-2 items-center">
           <input
@@ -244,6 +252,135 @@ function RatingRange({
         value={max}
         onChange={(e) => onChange(min, Math.max(Number(e.target.value), min))}
         aria-label="Maximum rating"
+      />
+    </div>
+  );
+}
+
+// Discrete stops for the votes range slider. The topmost stop is "10k+": for
+// the max handle it means "no upper bound" (null sent to the server); for the
+// min handle it means "at least 10k votes".
+const VOTE_STOPS = [0, 10, 100, 1000, 10000];
+const VOTE_STOP_LABELS = ["0", "10", "100", "1k", "10k+"];
+const VOTE_LAST_IDX = VOTE_STOPS.length - 1;
+
+function minVotesIndex(value: number): number {
+  for (let i = VOTE_LAST_IDX; i >= 0; i--) {
+    if ((VOTE_STOPS[i] as number) <= value) return i;
+  }
+  return 0;
+}
+
+function maxVotesIndex(value: number | null): number {
+  if (value === null) return VOTE_LAST_IDX;
+  for (let i = 0; i < VOTE_STOPS.length; i++) {
+    if ((VOTE_STOPS[i] as number) === value) return i;
+  }
+  return VOTE_LAST_IDX;
+}
+
+function formatVotesRange(min: number, max: number | null): string {
+  const loLabel = VOTE_STOP_LABELS[minVotesIndex(min)] ?? "0";
+  const hiLabel = VOTE_STOP_LABELS[maxVotesIndex(max)] ?? "10k+";
+  return `${loLabel} – ${hiLabel}`;
+}
+
+function VotesRange({
+  minVotes,
+  maxVotes,
+  onChange,
+}: {
+  minVotes: number;
+  maxVotes: number | null;
+  onChange: (lo: number, hi: number | null) => void;
+}): JSX.Element {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; loIdx: number; hiIdx: number; width: number } | null>(null);
+
+  const loIdx = minVotesIndex(minVotes);
+  const hiIdx = maxVotesIndex(maxVotes);
+
+  const clampIdx = (i: number): number => Math.max(0, Math.min(VOTE_LAST_IDX, Math.round(i)));
+
+  const setFromIndices = (newLo: number, newHi: number): void => {
+    const minValue = (VOTE_STOPS[newLo] ?? 0) as number;
+    const maxValue = newHi === VOTE_LAST_IDX ? null : ((VOTE_STOPS[newHi] ?? 0) as number);
+    onChange(minValue, maxValue);
+  };
+
+  const onFillDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const track = trackRef.current;
+    if (!track) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragStart({ x: e.clientX, loIdx, hiIdx, width: track.getBoundingClientRect().width });
+  };
+
+  const onFillMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragStart) return;
+    const deltaIdx = ((e.clientX - dragStart.x) / dragStart.width) * VOTE_LAST_IDX;
+    const span = dragStart.hiIdx - dragStart.loIdx;
+    let newLo = dragStart.loIdx + deltaIdx;
+    let newHi = dragStart.hiIdx + deltaIdx;
+    if (newLo < 0) {
+      newLo = 0;
+      newHi = span;
+    }
+    if (newHi > VOTE_LAST_IDX) {
+      newHi = VOTE_LAST_IDX;
+      newLo = VOTE_LAST_IDX - span;
+    }
+    setFromIndices(clampIdx(newLo), clampIdx(newHi));
+  };
+
+  const onFillUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    setDragStart(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const loPct = (loIdx / VOTE_LAST_IDX) * 100;
+  const hiPct = (hiIdx / VOTE_LAST_IDX) * 100;
+
+  return (
+    <div ref={trackRef} className="range-dual">
+      <div className="absolute inset-x-0 h-1 bg-panel2 rounded-full" />
+      <div
+        className="absolute h-full flex items-center cursor-grab active:cursor-grabbing"
+        style={{
+          left: `${loPct}%`,
+          right: `${100 - hiPct}%`,
+          touchAction: "none",
+        }}
+        onPointerDown={onFillDown}
+        onPointerMove={onFillMove}
+        onPointerUp={onFillUp}
+        onPointerCancel={onFillUp}
+        aria-label="Drag to shift votes range"
+      >
+        <div className="h-1 w-full bg-accent rounded-full" />
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={VOTE_LAST_IDX}
+        step={1}
+        value={loIdx}
+        onChange={(e) => {
+          const next = Math.min(Number(e.target.value), hiIdx);
+          setFromIndices(next, hiIdx);
+        }}
+        aria-label="Minimum votes"
+      />
+      <input
+        type="range"
+        min={0}
+        max={VOTE_LAST_IDX}
+        step={1}
+        value={hiIdx}
+        onChange={(e) => {
+          const next = Math.max(Number(e.target.value), loIdx);
+          setFromIndices(loIdx, next);
+        }}
+        aria-label="Maximum votes"
       />
     </div>
   );

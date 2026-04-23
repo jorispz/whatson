@@ -21,6 +21,8 @@ export function buildTitlesQuery(
   if (f.genreIds.length > 0) params.set("genres", f.genreIds.join(","));
   if (f.minRating > 0) params.set("minRating", String(f.minRating));
   if (f.maxRating < 10) params.set("maxRating", String(f.maxRating));
+  if (f.minVotes > 0) params.set("minVotes", String(f.minVotes));
+  if (f.maxVotes !== null) params.set("maxVotes", String(f.maxVotes));
   if (f.yearFrom !== null) params.set("yearFrom", String(f.yearFrom));
   if (f.yearTo !== null) params.set("yearTo", String(f.yearTo));
   if (extras?.onlyIds && extras.onlyIds.length > 0) params.set("onlyIds", extras.onlyIds.join(","));

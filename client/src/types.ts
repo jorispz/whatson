@@ -53,6 +53,8 @@ export interface Filters {
   genreIds: number[];
   minRating: number;
   maxRating: number;
+  minVotes: number;
+  maxVotes: number | null;
   yearFrom: number | null;
   yearTo: number | null;
   sort: SortKey;

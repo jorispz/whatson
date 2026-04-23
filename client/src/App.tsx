@@ -27,6 +27,8 @@ const DEFAULT_FILTERS: Filters = {
   genreIds: [],
   minRating: 0,
   maxRating: 10,
+  minVotes: 0,
+  maxVotes: null,
   yearFrom: null,
   yearTo: null,
   sort: "year",
@@ -440,6 +442,8 @@ function countActive(f: Filters): number {
   if (f.genreIds.length > 0) n++;
   if (f.minRating > 0) n++;
   if (f.maxRating < 10) n++;
+  if (f.minVotes > 0) n++;
+  if (f.maxVotes !== null) n++;
   if (f.yearFrom !== null) n++;
   if (f.yearTo !== null) n++;
   return n;

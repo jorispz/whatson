@@ -229,6 +229,7 @@ api.get("/titles", (req, res) => {
   const minRating = req.query.minRating !== undefined ? Number(req.query.minRating) : null;
   const maxRating = req.query.maxRating !== undefined ? Number(req.query.maxRating) : null;
   const minVotes = req.query.minVotes !== undefined ? Number(req.query.minVotes) : 0;
+  const maxVotes = req.query.maxVotes !== undefined ? Number(req.query.maxVotes) : null;
   const yearFrom = req.query.yearFrom !== undefined ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo !== undefined ? Number(req.query.yearTo) : null;
   const sort =
@@ -270,6 +271,10 @@ api.get("/titles", (req, res) => {
   if (Number.isFinite(minVotes) && minVotes > 0) {
     where.push("t.vote_count >= @minVotes");
     params.minVotes = minVotes;
+  }
+  if (maxVotes !== null && Number.isFinite(maxVotes)) {
+    where.push("t.vote_count <= @maxVotes");
+    params.maxVotes = maxVotes;
   }
   if (yearFrom !== null && Number.isFinite(yearFrom)) {
     where.push("t.release_year >= @yearFrom");
