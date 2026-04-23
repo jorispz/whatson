@@ -216,7 +216,9 @@ export function App(): JSX.Element {
       <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur border-b border-white/5">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="whatson" className="h-7 w-auto" />
+            <div className="h-7 w-8 sm:w-auto overflow-hidden shrink-0">
+              <img src="/logo.png" alt="whatson" className="h-7 max-w-none block" />
+            </div>
           </div>
           <div className="flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
             <label
