@@ -25,7 +25,7 @@ const DEFAULT_FILTERS: Filters = {
   mediaTypes: [],
   providerIds: [],
   genreIds: [],
-  minRating: 5.5,
+  minRating: 0,
   maxRating: 10,
   yearFrom: null,
   yearTo: null,

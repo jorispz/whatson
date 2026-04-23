@@ -228,7 +228,7 @@ api.get("/titles", (req, res) => {
   const genreIds = parseCsvInt(req.query.genres);
   const minRating = req.query.minRating !== undefined ? Number(req.query.minRating) : null;
   const maxRating = req.query.maxRating !== undefined ? Number(req.query.maxRating) : null;
-  const minVotes = req.query.minVotes !== undefined ? Number(req.query.minVotes) : 50;
+  const minVotes = req.query.minVotes !== undefined ? Number(req.query.minVotes) : 0;
   const yearFrom = req.query.yearFrom !== undefined ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo !== undefined ? Number(req.query.yearTo) : null;
   const sort =
