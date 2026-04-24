@@ -4,20 +4,18 @@
       <stop offset="0" stop-color="#ffb347"/>
       <stop offset="1" stop-color="#ff4e2b"/>
     </linearGradient>
-    <linearGradient id="mag" gradientUnits="userSpaceOnUse" x1="115" y1="115" x2="405" y2="405">
+    <linearGradient id="mag" gradientUnits="userSpaceOnUse" x1="110" y1="110" x2="400" y2="400">
       <stop offset="0" stop-color="#60a5fa"/>
       <stop offset="1" stop-color="#1e5fd4"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" fill="#0b0d12"/>
-  <line x1="317" y1="317" x2="387" y2="387"
-        stroke="url(#mag)" stroke-width="40" stroke-linecap="round"/>
-  <circle cx="225" cy="225" r="115"
-          fill="none" stroke="url(#mag)" stroke-width="30"/>
-  <path d="M 180 170 L 295 225 L 180 280 Z"
+  <circle cx="256" cy="256" r="150"
+          fill="none" stroke="url(#mag)" stroke-width="36"/>
+  <path d="M 212 196 L 332 256 L 212 316 Z"
         fill="url(#play)"
         stroke="url(#play)"
-        stroke-width="24"
+        stroke-width="28"
         stroke-linejoin="round"
         stroke-linecap="round"/>
 </svg>
