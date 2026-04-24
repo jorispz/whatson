@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, getMeta } from "./db.js";
+import { db, defaultProfileId, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
 import { fetchRecommendations, fetchTitleDetails, pickBestTrailer } from "./tmdb.js";
 
@@ -563,4 +563,122 @@ api.get("/titles", (req, res) => {
     offset,
     results,
   });
+});
+
+interface MarkRow {
+  tmdb_id: number;
+  media_type: "movie" | "tv";
+  watchlist: number;
+  seen: number;
+}
+
+function markKey(mediaType: "movie" | "tv", tmdbId: number): string {
+  return `${mediaType}-${tmdbId}`;
+}
+
+function rowsToMarksObject(rows: MarkRow[]): Record<string, { watchlist?: true; seen?: true }> {
+  const out: Record<string, { watchlist?: true; seen?: true }> = {};
+  for (const r of rows) {
+    const entry: { watchlist?: true; seen?: true } = {};
+    if (r.watchlist) entry.watchlist = true;
+    if (r.seen) entry.seen = true;
+    if (entry.watchlist || entry.seen) out[markKey(r.media_type, r.tmdb_id)] = entry;
+  }
+  return out;
+}
+
+api.get("/marks", (_req, res) => {
+  const rows = db
+    .prepare("SELECT tmdb_id, media_type, watchlist, seen FROM marks WHERE profile_id = ?")
+    .all(defaultProfileId()) as MarkRow[];
+  res.json(rowsToMarksObject(rows));
+});
+
+api.put("/marks/:mediaType/:tmdbId", (req, res) => {
+  const { mediaType, tmdbId: idRaw } = req.params;
+  if (mediaType !== "movie" && mediaType !== "tv") {
+    res.status(400).json({ error: "invalid mediaType" });
+    return;
+  }
+  const tmdbId = Number(idRaw);
+  if (!Number.isFinite(tmdbId)) {
+    res.status(400).json({ error: "invalid tmdbId" });
+    return;
+  }
+  const body = (req.body ?? {}) as { watchlist?: unknown; seen?: unknown };
+  const watchlist = body.watchlist === true ? 1 : 0;
+  const seen = body.seen === true ? 1 : 0;
+  const profileId = defaultProfileId();
+  if (!watchlist && !seen) {
+    db.prepare(
+      "DELETE FROM marks WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
+    ).run(profileId, mediaType, tmdbId);
+  } else {
+    db.prepare(
+      `
+      INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(profile_id, media_type, tmdb_id) DO UPDATE SET
+        watchlist = excluded.watchlist,
+        seen = excluded.seen,
+        updated_at = excluded.updated_at
+    `,
+    ).run(profileId, tmdbId, mediaType, watchlist, seen);
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * Additive merge import: for each entry, OR the incoming flags onto any
+ * existing row. Never removes marks — matches the client's merge semantics
+ * for the Cmd+Shift+M shortcut.
+ */
+api.post("/marks/import", (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== "object") {
+    res.status(400).json({ error: "invalid body" });
+    return;
+  }
+  const profileId = defaultProfileId();
+  const stmt = db.prepare(
+    `
+    INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(profile_id, media_type, tmdb_id) DO UPDATE SET
+      watchlist = max(marks.watchlist, excluded.watchlist),
+      seen      = max(marks.seen,      excluded.seen),
+      updated_at = excluded.updated_at
+  `,
+  );
+  let imported = 0;
+  const tx = db.transaction(() => {
+    for (const [key, rawValue] of Object.entries(body as Record<string, unknown>)) {
+      const dash = key.indexOf("-");
+      if (dash < 0) continue;
+      const mt = key.slice(0, dash);
+      const tmdbId = Number(key.slice(dash + 1));
+      if ((mt !== "movie" && mt !== "tv") || !Number.isFinite(tmdbId)) continue;
+      let watchlist = 0;
+      let seen = 0;
+      if (typeof rawValue === "string") {
+        // Legacy single-mark format: "watchlist" | "seen".
+        if (rawValue === "watchlist") watchlist = 1;
+        else if (rawValue === "seen") seen = 1;
+      } else if (rawValue && typeof rawValue === "object") {
+        const v = rawValue as { watchlist?: unknown; seen?: unknown };
+        if (v.watchlist === true) watchlist = 1;
+        if (v.seen === true) seen = 1;
+      }
+      if (!watchlist && !seen) continue;
+      stmt.run(profileId, tmdbId, mt, watchlist, seen);
+      imported++;
+    }
+  });
+  tx();
+  const total = (
+    db.prepare("SELECT COUNT(*) AS n FROM marks WHERE profile_id = ?").get(profileId) as {
+      n: number;
+    }
+  ).n;
+  res.json({ imported, total });
 });

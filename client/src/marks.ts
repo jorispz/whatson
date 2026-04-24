@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { api } from "./api";
 import type { Title } from "./types";
 
 export type Mark = "watchlist" | "seen";
@@ -8,83 +9,47 @@ export interface MarkSet {
 }
 export type Marks = Record<string, MarkSet>;
 
-const STORAGE_KEY = "whatson.marks.v1";
+// Marks live in the server DB, scoped to the default profile.
 
 const titleKey = (t: Pick<Title, "mediaType" | "tmdbId">): string => `${t.mediaType}-${t.tmdbId}`;
 
-function normalizeEntry(v: unknown): MarkSet | null {
-  // Legacy format: value was a single mark name. Upgrade to a set with that
-  // mark enabled — nothing is lost on read, and the next write persists the
-  // new shape.
-  if (typeof v === "string") {
-    if (v === "watchlist" || v === "seen") return { [v]: true } as MarkSet;
-    return null;
-  }
-  if (v && typeof v === "object") {
-    const obj = v as Record<string, unknown>;
-    const out: MarkSet = {};
-    if (obj.watchlist === true) out.watchlist = true;
-    if (obj.seen === true) out.seen = true;
-    return out.watchlist || out.seen ? out : null;
-  }
-  return null;
-}
-
-function readMarks(): Marks {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: Marks = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      const n = normalizeEntry(v);
-      if (n) out[k] = n;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function writeMarks(marks: Marks): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(marks));
-}
-
 const listeners = new Set<(marks: Marks) => void>();
-let current: Marks = typeof window === "undefined" ? {} : readMarks();
+let current: Marks = {};
 
+function notify(): void {
+  listeners.forEach((l) => l(current));
+}
+
+async function loadFromServer(): Promise<void> {
+  try {
+    current = await api.marks.get();
+  } catch (err) {
+    console.error("marks load failed:", err);
+    current = {};
+  }
+  notify();
+}
+
+// Kick off initial load as soon as the module is imported in the browser.
+let loadPromise: Promise<void> | null = null;
 if (typeof window !== "undefined") {
-  window.addEventListener("storage", (e) => {
-    if (e.key === STORAGE_KEY) {
-      current = readMarks();
-      listeners.forEach((l) => l(current));
-    }
-  });
+  loadPromise = loadFromServer();
 }
 
 export function exportMarksJson(): string {
   return JSON.stringify(current);
 }
 
-export function importMarksMerge(json: string): { imported: number; total: number } {
+export async function importMarksMerge(
+  json: string,
+): Promise<{ imported: number; total: number }> {
   const parsed = JSON.parse(json) as unknown;
   if (!parsed || typeof parsed !== "object") throw new Error("Not a marks object");
-  const next: Marks = { ...current };
-  let imported = 0;
-  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    const n = normalizeEntry(v);
-    if (!n) continue;
-    const existing = next[k] ?? {};
-    const merged: MarkSet = { ...existing };
-    if (n.watchlist) merged.watchlist = true;
-    if (n.seen) merged.seen = true;
-    next[k] = merged;
-    imported++;
-  }
-  current = next;
-  writeMarks(next);
-  listeners.forEach((l) => l(next));
-  return { imported, total: Object.keys(next).length };
+  const { imported } = await api.marks.importMerge(parsed as Record<string, unknown>);
+  // Re-read the canonical state from the server so local matches exactly.
+  current = await api.marks.get();
+  notify();
+  return { imported, total: Object.keys(current).length };
 }
 
 export function useMarks(): {
@@ -98,6 +63,9 @@ export function useMarks(): {
   useEffect(() => {
     const onChange = (next: Marks): void => setMarks(next);
     listeners.add(onChange);
+    // If the initial fetch hasn't landed yet, wait for it so the component
+    // re-renders with server state instead of the empty snapshot.
+    if (loadPromise) void loadPromise.then(() => setMarks(current));
     return () => {
       listeners.delete(onChange);
     };
@@ -113,8 +81,15 @@ export function useMarks(): {
     if (nextEntry.watchlist || nextEntry.seen) next[key] = nextEntry;
     else delete next[key];
     current = next;
-    writeMarks(next);
-    listeners.forEach((l) => l(next));
+    notify();
+    void api.marks
+      .put(t.mediaType, t.tmdbId, {
+        watchlist: !!nextEntry.watchlist,
+        seen: !!nextEntry.seen,
+      })
+      .catch((err) => {
+        console.error("mark save failed:", err);
+      });
   }, []);
 
   const getMarks = useCallback(

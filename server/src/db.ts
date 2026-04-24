@@ -71,7 +71,38 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- Profiles exist to scope marks for a future multi-profile feature. For
+  -- now there's a single seeded 'default' row and all operations target it.
+  CREATE TABLE IF NOT EXISTS profiles (
+    id         INTEGER PRIMARY KEY,
+    key        TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  INSERT OR IGNORE INTO profiles (id, key, name) VALUES (1, 'default', 'Default');
+
+  CREATE TABLE IF NOT EXISTS marks (
+    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    tmdb_id    INTEGER NOT NULL,
+    media_type TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
+    watchlist  INTEGER NOT NULL DEFAULT 0,
+    seen       INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (profile_id, media_type, tmdb_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_marks_profile ON marks(profile_id);
 `);
+
+export function defaultProfileId(): number {
+  const row = db.prepare("SELECT id FROM profiles WHERE key = 'default'").get() as
+    | { id: number }
+    | undefined;
+  if (!row) throw new Error("default profile missing");
+  return row.id;
+}
 
 // Migration: add monetization column to pre-existing availability tables. CREATE TABLE
 // IF NOT EXISTS above is a no-op when the table already exists, so we need an explicit

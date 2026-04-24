@@ -155,7 +155,7 @@ export function App(): JSX.Element {
         e.preventDefault();
         try {
           const text = await readFromClipboard();
-          const { imported, total } = importMarksMerge(text);
+          const { imported, total } = await importMarksMerge(text);
           setToast(`Imported ${imported} mark${imported === 1 ? "" : "s"} (${total} total)`);
         } catch (err) {
           setToast(`Import failed: ${err instanceof Error ? err.message : String(err)}`);

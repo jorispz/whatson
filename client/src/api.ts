@@ -62,6 +62,28 @@ export const api = {
     id: number,
     providerKey: string,
   ): Promise<{ url: string | null }> => fetchJson(`/api/deeplink/${mediaType}/${id}/${providerKey}`),
+  marks: {
+    get: (): Promise<Record<string, { watchlist?: true; seen?: true }>> =>
+      fetchJson("/api/marks"),
+    put: (
+      mediaType: "movie" | "tv",
+      tmdbId: number,
+      set: { watchlist: boolean; seen: boolean },
+    ): Promise<{ ok: true }> =>
+      fetchJson(`/api/marks/${mediaType}/${tmdbId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(set),
+      }),
+    importMerge: (
+      payload: Record<string, unknown>,
+    ): Promise<{ imported: number; total: number }> =>
+      fetchJson("/api/marks/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+  },
 };
 
 export const posterUrl = (path: string | null, size: "w185" | "w342" | "w500" = "w342"): string | null =>
