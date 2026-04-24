@@ -15,6 +15,12 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^8.2.2"
+  },
+  "overrides": {
+    "postcss-load-config": "^4.0.2"
+  },
+  "engines": {
+    "node": ">=16.14.0"
   }
 }
