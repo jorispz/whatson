@@ -51,6 +51,7 @@ export interface Filters {
   mediaTypes: MediaType[];
   providerIds: number[];
   genreIds: number[];
+  genreMode: "any" | "all";
   minRating: number;
   maxRating: number;
   minVotes: number;

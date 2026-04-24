@@ -95,7 +95,22 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
         </div>
       </Section>
 
-      <Section label="Genre">
+      <Section
+        label="Genre"
+        extra={
+          filters.genreIds.length > 1 && (
+            <label className="flex items-center gap-1.5 text-xs text-mute cursor-pointer hover:text-ink normal-case tracking-normal">
+              <input
+                type="checkbox"
+                checked={filters.genreMode === "all"}
+                onChange={(e) => onChange({ genreMode: e.target.checked ? "all" : "any" })}
+                className="accent-accent"
+              />
+              Require all selected
+            </label>
+          )
+        }
+      >
         <div className="flex flex-wrap gap-1.5">
           {mergedGenres.map((g) => (
             <Chip key={g.id} active={filters.genreIds.includes(g.id)} onClick={() => toggleGenre(g.id)} small>
@@ -134,10 +149,21 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+function Section({
+  label,
+  extra,
+  children,
+}: {
+  label: string;
+  extra?: React.ReactNode;
+  children: React.ReactNode;
+}): JSX.Element {
   return (
     <div>
-      <div className="text-xs uppercase tracking-wider text-mute mb-2">{label}</div>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-xs uppercase tracking-wider text-mute">{label}</div>
+        {extra}
+      </div>
       {children}
     </div>
   );

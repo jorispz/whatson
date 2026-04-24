@@ -30,6 +30,7 @@ const DEFAULT_FILTERS: Filters = {
   mediaTypes: [],
   providerIds: [],
   genreIds: [],
+  genreMode: "all",
   minRating: 0,
   maxRating: 10,
   minVotes: 0,

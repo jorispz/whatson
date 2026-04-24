@@ -390,6 +390,7 @@ api.get("/titles", (req, res) => {
   const mediaTypes = parseCsv(req.query.mediaType).filter((x): x is "movie" | "tv" => x === "movie" || x === "tv");
   const providerIds = parseCsvInt(req.query.providers);
   const genreIds = parseCsvInt(req.query.genres);
+  const genreMode = req.query.genreMode === "all" ? "all" : "any";
   const minRating = req.query.minRating !== undefined ? Number(req.query.minRating) : null;
   const maxRating = req.query.maxRating !== undefined ? Number(req.query.maxRating) : null;
   const minVotes = req.query.minVotes !== undefined ? Number(req.query.minVotes) : 0;
@@ -457,12 +458,22 @@ api.get("/titles", (req, res) => {
     providerIds.forEach((v, i) => (params[`p${i}`] = v));
   }
   if (genreIds.length > 0) {
-    // match ANY of the selected genres
-    where.push(`EXISTS (
-      SELECT 1 FROM title_genres tg
-      WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type
-        AND tg.genre_id IN (${genreIds.map((_, i) => `@g${i}`).join(",")})
-    )`);
+    const placeholders = genreIds.map((_, i) => `@g${i}`).join(",");
+    if (genreMode === "all" && genreIds.length > 1) {
+      // Title must carry every selected genre.
+      where.push(`(
+        SELECT COUNT(*) FROM title_genres tg
+        WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type
+          AND tg.genre_id IN (${placeholders})
+      ) = ${genreIds.length}`);
+    } else {
+      // Title must carry any selected genre.
+      where.push(`EXISTS (
+        SELECT 1 FROM title_genres tg
+        WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type
+          AND tg.genre_id IN (${placeholders})
+      )`);
+    }
     genreIds.forEach((v, i) => (params[`g${i}`] = v));
   }
 

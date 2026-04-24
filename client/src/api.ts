@@ -18,7 +18,10 @@ export function buildTitlesQuery(
   }
   if (f.mediaTypes.length > 0) params.set("mediaType", f.mediaTypes.join(","));
   if (f.providerIds.length > 0) params.set("providers", f.providerIds.join(","));
-  if (f.genreIds.length > 0) params.set("genres", f.genreIds.join(","));
+  if (f.genreIds.length > 0) {
+    params.set("genres", f.genreIds.join(","));
+    if (f.genreIds.length > 1 && f.genreMode === "all") params.set("genreMode", "all");
+  }
   if (f.minRating > 0) params.set("minRating", String(f.minRating));
   if (f.maxRating < 10) params.set("maxRating", String(f.maxRating));
   if (f.minVotes > 0) params.set("minVotes", String(f.minVotes));
