@@ -4,17 +4,17 @@
       <stop offset="0" stop-color="#ffb347"/>
       <stop offset="1" stop-color="#ff4e2b"/>
     </linearGradient>
-    <linearGradient id="mag" gradientUnits="userSpaceOnUse" x1="90" y1="90" x2="410" y2="410">
+    <linearGradient id="mag" gradientUnits="userSpaceOnUse" x1="115" y1="115" x2="405" y2="405">
       <stop offset="0" stop-color="#60a5fa"/>
       <stop offset="1" stop-color="#1e5fd4"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" fill="#0b0d12"/>
-  <line x1="322" y1="322" x2="398" y2="398"
-        stroke="url(#mag)" stroke-width="44" stroke-linecap="round"/>
-  <circle cx="225" cy="225" r="130"
-          fill="none" stroke="url(#mag)" stroke-width="32"/>
-  <path d="M 185 175 L 285 225 L 185 275 Z"
+  <line x1="317" y1="317" x2="387" y2="387"
+        stroke="url(#mag)" stroke-width="40" stroke-linecap="round"/>
+  <circle cx="225" cy="225" r="115"
+          fill="none" stroke="url(#mag)" stroke-width="30"/>
+  <path d="M 180 170 L 295 225 L 180 280 Z"
         fill="url(#play)"
         stroke="url(#play)"
         stroke-width="24"
