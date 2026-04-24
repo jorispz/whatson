@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Filters, Genre, Provider, SortKey, Status, Title, TitlesResponse } from "./types";
 import { api } from "./api";
 import { FiltersPanel } from "./components/Filters";
@@ -285,11 +286,35 @@ export function App(): JSX.Element {
         : sample.results;
       if (pool.length === 0) return;
       const pick = pool[Math.floor(Math.random() * pool.length)];
-      if (pick) setSelected(pick);
+      if (pick) openModal(pick);
     } catch (err) {
       console.error(err);
     }
   }, [filters, queryExtras, emptyByMarks, marks]);
+
+  // Make the TitleModal participate in the browser back stack so the natural
+  // mobile back gesture closes the modal instead of leaving the app. One
+  // history entry per modal session — recommendation-hopping doesn't stack.
+  const openModal = useCallback(
+    (t: Title) => {
+      if (!selected) window.history.pushState({ whatsonModal: true }, "");
+      setSelected(t);
+    },
+    [selected],
+  );
+  const closeModal = useCallback(() => {
+    if ((window.history.state as { whatsonModal?: boolean } | null)?.whatsonModal) {
+      // popstate fires from history.back(); that handler clears `selected`.
+      window.history.back();
+    } else {
+      setSelected(null);
+    }
+  }, []);
+  useEffect(() => {
+    const onPopState = (): void => setSelected(null);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   // Switching between Results and Watchlist mode resets the filter sidebar —
   // filters carry over poorly between the two contexts.
@@ -337,7 +362,21 @@ export function App(): JSX.Element {
                 Watchlist
               </button>
             </div>
-            <div className="flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
+            <div className="lg:hidden shrink-0">
+              <MobileFilters
+                filters={filters}
+                providers={providers}
+                genres={genres}
+                onChange={updateFilters}
+                onReset={resetFilters}
+                activeCount={activeFilterCount}
+                onSurprise={surpriseMe}
+                canSurprise={!!data && data.results.length > 0}
+                onRefresh={onSync}
+                syncing={!!status?.syncing}
+              />
+            </div>
+            <div className="hidden lg:flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
             <label
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 cursor-pointer ${
                 filters.hideSeen
@@ -418,17 +457,6 @@ export function App(): JSX.Element {
         </aside>
 
         <main className="flex-1 min-w-0 p-4">
-          <div className="lg:hidden mb-4">
-            <MobileFilters
-              filters={filters}
-              providers={providers}
-              genres={genres}
-              onChange={updateFilters}
-              onReset={resetFilters}
-              activeCount={activeFilterCount}
-            />
-          </div>
-
           {needsSync && (
             <div className="rounded-lg bg-panel p-6 text-center">
               <div className="text-lg font-medium mb-1">Your catalog is empty</div>
@@ -458,7 +486,7 @@ export function App(): JSX.Element {
                     title={t}
                     providers={providers}
                     markSet={getMarks(t)}
-                    onSelect={setSelected}
+                    onSelect={openModal}
                     onToggleMark={toggle}
                   />
                 ))}
@@ -492,8 +520,8 @@ export function App(): JSX.Element {
           title={selected}
           providers={providers}
           genres={genres}
-          onClose={() => setSelected(null)}
-          onSelect={setSelected}
+          onClose={closeModal}
+          onSelect={openModal}
         />
       )}
 
@@ -513,6 +541,10 @@ function MobileFilters({
   onChange,
   onReset,
   activeCount,
+  onSurprise,
+  canSurprise,
+  onRefresh,
+  syncing,
 }: {
   filters: Filters;
   providers: Provider[];
@@ -520,27 +552,70 @@ function MobileFilters({
   onChange: (patch: Partial<Filters>) => void;
   onReset: () => void;
   activeCount: number;
+  onSurprise: () => void;
+  canSurprise: boolean;
+  onRefresh: () => void;
+  syncing: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const close = (): void => setOpen(false);
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded bg-panel px-3 py-2 text-sm ring-1 ring-white/10 w-full text-left"
+        className="rounded-full bg-panel2 px-3 py-1 text-xs ring-1 ring-white/10 text-ink hover:ring-accent"
       >
         Filters{activeCount > 0 ? ` (${activeCount})` : ""}
       </button>
-      {open && (
-        <div className="fixed inset-0 z-40 bg-black/70" onClick={() => setOpen(false)}>
+      {open && createPortal(
+        <div className="fixed inset-0 z-40 bg-black/70" onClick={close}>
           <div
-            className="absolute inset-y-0 left-0 w-80 bg-panel overflow-y-auto"
+            className="absolute inset-y-0 left-0 w-80 bg-panel overflow-y-auto flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center p-4 border-b border-white/5">
-              <div className="font-medium">Filters</div>
-              <button onClick={() => setOpen(false)} className="text-mute hover:text-ink">
+              <div className="font-medium">Menu</div>
+              <button onClick={close} className="text-mute hover:text-ink" aria-label="Close">
                 ✕
               </button>
+            </div>
+            <div className="p-4 border-b border-white/5 space-y-3">
+              <div className="text-xs uppercase tracking-wider text-mute">View</div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filters.hideSeen}
+                  onChange={(e) => onChange({ hideSeen: e.target.checked })}
+                  className="accent-accent"
+                />
+                Hide seen
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-mute shrink-0">Sort</span>
+                <select
+                  value={filters.sort}
+                  onChange={(e) => {
+                    const sort = e.target.value as SortKey;
+                    onChange(sort === "random" ? { sort, randomSeed: newSeed() } : { sort });
+                  }}
+                  className="flex-1 bg-panel2 rounded px-2 py-1.5 ring-1 ring-white/10 outline-none focus:ring-accent text-ink text-sm"
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                {filters.sort === "random" && (
+                  <button
+                    onClick={() => onChange({ randomSeed: newSeed() })}
+                    className="rounded px-2 py-1.5 bg-panel2 ring-1 ring-white/10 hover:ring-accent shrink-0"
+                    title="Reshuffle"
+                  >
+                    🔀
+                  </button>
+                )}
+              </div>
             </div>
             <FiltersPanel
               filters={filters}
@@ -549,8 +624,28 @@ function MobileFilters({
               onChange={onChange}
               onReset={onReset}
             />
+            <div className="mt-auto p-4 border-t border-white/5 flex gap-2">
+              <button
+                onClick={() => {
+                  onSurprise();
+                  close();
+                }}
+                disabled={!canSurprise}
+                className="flex-1 rounded px-3 py-2 bg-panel2 ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-40"
+              >
+                🎲 Surprise me
+              </button>
+              <button
+                onClick={onRefresh}
+                disabled={syncing}
+                className="flex-1 rounded px-3 py-2 bg-panel2 ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-60"
+              >
+                {syncing ? "Syncing…" : "Refresh"}
+              </button>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
