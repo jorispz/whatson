@@ -65,7 +65,8 @@ function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: P
         </div>
       </div>
       </div>
-      <div className="absolute top-2 left-2 flex gap-1">
+      <div className="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+
         <MarkButton
           active={!!markSet?.seen}
           title={markSet?.seen ? "Unmark as seen" : "Mark as seen"}
