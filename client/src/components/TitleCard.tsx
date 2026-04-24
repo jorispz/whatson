@@ -54,13 +54,12 @@ function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Prop
           <span className="text-yellow-400">★</span>
           <span>{title.voteAverage.toFixed(1)}</span>
         </div>
-        <div className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-mute">
-          {title.mediaType === "movie" ? "Movie" : "TV"}
-        </div>
       </div>
       <div className="p-3 flex-1 flex flex-col gap-1">
         <div className="font-medium text-sm leading-snug line-clamp-2">{title.title}</div>
-        <div className="text-xs text-mute">{title.releaseYear ?? "—"}</div>
+        <div className="text-xs text-mute">
+          {title.mediaType === "movie" ? "Movie" : "TV"} · {title.releaseYear ?? "—"}
+        </div>
         <div className="mt-auto flex items-center gap-1 pt-2 flex-wrap">
           {services.map((s) => (
             <ProviderBadge key={s.id} provider={s} title={title} />
