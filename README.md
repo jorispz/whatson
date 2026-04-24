@@ -8,6 +8,28 @@ Local web app to browse what's available on your Netflix, Disney+, HBO Max, and 
 > Netflix, Disney+, HBO Max, Ziggo, or TMDB. All service names, logos, and
 > title artwork are the property of their respective owners.
 
+## Why
+
+Streaming services' recommendation engines chase what's popular right
+now. The long tail — decades-old films, foreign gems, one-hit-wonder TV,
+anything with fewer than ten thousand ratings — sits buried underneath.
+whatson exposes your services' *entire* catalog as a flat, filterable
+grid, tuned for deliberate digging rather than passive scrolling.
+
+- **Random sort by default**, with a per-day seed — every visit
+  resurfaces different corners of the catalog, but the order stays
+  stable within a session so you don't lose your place.
+- **Votes range filter** — cap min *and* max rating counts to carve out
+  the obscure-but-signal (e.g. 10–1,000 ratings: widely unknown yet
+  rated enough that the score means something).
+- **Year slider** across 1900 onwards — pin down "the 70s" or any
+  arbitrary era when you're in that mood.
+- **Genre AND mode** — intersect multiple genres instead of unioning
+  them, so "Horror + Comedy" actually returns the rare crossovers
+  rather than everything in either bucket.
+- **Watchlist and seen marks** — kept locally in your browser, so you
+  can build up your own discovery queue.
+
 ## Setup
 
 1. Get a free TMDB API Read Access Token at https://www.themoviedb.org/settings/api (v4 auth, the long JWT-style one).
