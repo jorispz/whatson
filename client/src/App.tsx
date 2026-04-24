@@ -364,9 +364,8 @@ export function App(): JSX.Element {
                 </button>
               </div>
               {data && (
-                <span className="text-xs text-mute truncate">
-                  {data.total.toLocaleString()}
-                  <span className="hidden sm:inline"> titles</span>
+                <span className="hidden sm:inline text-xs text-mute">
+                  {data.total.toLocaleString()} titles
                   {activeFilterCount > 0 && (
                     <span className="hidden md:inline">
                       {" "}· {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
