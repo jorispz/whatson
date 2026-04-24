@@ -1,3 +1,4 @@
+import "./fetchPolyfill.js";
 import express, { type ErrorRequestHandler } from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

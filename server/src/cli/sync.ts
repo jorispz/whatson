@@ -1,3 +1,4 @@
+import "../fetchPolyfill.js";
 import { triggerSync, type SyncProgress } from "../sync.js";
 
 async function main(): Promise<void> {
