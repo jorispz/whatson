@@ -1,19 +1,19 @@
 import { memo, useState } from "react";
 import type { Provider, Title } from "../types";
 import { openServiceLink, posterUrl } from "../api";
-import type { Mark } from "../marks";
+import type { Mark, MarkSet } from "../marks";
 
 interface Props {
   title: Title;
   providers: Provider[];
-  mark: Mark | undefined;
+  markSet: MarkSet | undefined;
   onSelect: (title: Title) => void;
   onToggleMark: (title: Title, mark: Mark) => void;
 }
 
 export const TitleCard = memo(TitleCardInner);
 
-function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Props): JSX.Element {
+function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: Props): JSX.Element {
   const poster = posterUrl(title.posterPath);
   const services = title.providerIds
     .map((id) => providers.find((p) => p.id === id))
@@ -22,9 +22,7 @@ function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Prop
   return (
     <div
       style={{ contentVisibility: "auto", containIntrinsicSize: "420px" }}
-      className={`group relative flex flex-col rounded-lg overflow-hidden bg-panel hover:bg-panel2 transition-colors ring-1 hover:ring-accent/50 ${
-        mark === "seen" ? "ring-emerald-500/40 opacity-70" : mark === "watchlist" ? "ring-accent/50" : "ring-white/5"
-      }`}
+      className="group relative flex flex-col rounded-lg overflow-hidden bg-panel hover:bg-panel2 transition-colors ring-1 ring-white/5 hover:ring-accent/50"
     >
       <div
         role="button"
@@ -67,35 +65,24 @@ function TitleCardInner({ title, providers, mark, onSelect, onToggleMark }: Prop
         </div>
       </div>
       </div>
-      <div className="absolute top-2 left-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <div className="absolute top-2 left-2 flex gap-1">
         <MarkButton
-          active={mark === "watchlist"}
-          title={mark === "watchlist" ? "Remove from watchlist" : "Add to watchlist"}
-          onClick={() => onToggleMark(title, "watchlist")}
-          activeClass="bg-accent text-bg"
-        >
-          🔖
-        </MarkButton>
-        <MarkButton
-          active={mark === "seen"}
-          title={mark === "seen" ? "Unmark as seen" : "Mark as seen"}
+          active={!!markSet?.seen}
+          title={markSet?.seen ? "Unmark as seen" : "Mark as seen"}
           onClick={() => onToggleMark(title, "seen")}
-          activeClass="bg-emerald-500 text-bg"
+          activeClass="bg-emerald-500 text-bg ring-emerald-500/40"
         >
           ✓
         </MarkButton>
+        <MarkButton
+          active={!!markSet?.watchlist}
+          title={markSet?.watchlist ? "Remove from watchlist" : "Add to watchlist"}
+          onClick={() => onToggleMark(title, "watchlist")}
+          activeClass="bg-accent text-bg ring-accent/40"
+        >
+          🔖
+        </MarkButton>
       </div>
-      {mark && (
-        <div className="absolute top-2 left-2 pointer-events-none group-hover:opacity-0 transition-opacity">
-          <div
-            className={`h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold shadow ${
-              mark === "seen" ? "bg-emerald-500 text-bg" : "bg-accent text-bg"
-            }`}
-          >
-            {mark === "seen" ? "✓" : "🔖"}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -114,18 +101,24 @@ function MarkButton({
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      title={title}
-      className={`h-7 w-7 rounded-full flex items-center justify-center text-xs shadow ring-1 ring-white/10 ${
-        active ? activeClass : "bg-black/70 hover:bg-black/90 text-white"
-      }`}
-    >
-      {children}
-    </button>
+    <div className="group/mark relative">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+          e.currentTarget.blur();
+        }}
+        aria-label={title}
+        className={`h-7 w-7 rounded-full flex items-center justify-center text-xs shadow ring-1 ${
+          active ? activeClass : "bg-black/50 text-white/70 ring-white/20 hover:bg-black/70 hover:text-white hover:ring-white/40"
+        }`}
+      >
+        {children}
+      </button>
+      <span className="pointer-events-none absolute top-full left-0 z-10 mt-2 whitespace-nowrap rounded bg-black/90 px-2 py-1 text-xs text-white shadow-lg ring-1 ring-white/10 opacity-0 transition-opacity group-hover/mark:opacity-100">
+        {title}
+      </span>
+    </div>
   );
 }
 

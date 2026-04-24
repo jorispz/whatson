@@ -54,13 +54,13 @@ export function App(): JSX.Element {
   const [selected, setSelected] = useState<Title | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const reqIdRef = useRef(0);
-  const { marks, getMark, toggle } = useMarks();
+  const { marks, getMarks, toggle } = useMarks();
 
   const watchlistKeys = useMemo(() => {
     const out: string[] = [];
-    for (const [key, mark] of Object.entries(marks)) {
+    for (const [key, set] of Object.entries(marks)) {
       // Local key format is "movie-123"; server expects "movie:123".
-      if (mark === "watchlist") out.push(key.replace("-", ":"));
+      if (set.watchlist) out.push(key.replace("-", ":"));
     }
     return out;
   }, [marks]);
@@ -191,7 +191,7 @@ export function App(): JSX.Element {
   const visibleResults = useMemo(() => {
     if (!data) return [] as Title[];
     if (!filters.hideSeen) return data.results;
-    return data.results.filter((t) => marks[`${t.mediaType}-${t.tmdbId}`] !== "seen");
+    return data.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen);
   }, [data, filters.hideSeen, marks]);
 
   const surpriseMe = useCallback(async (): Promise<void> => {
@@ -199,7 +199,7 @@ export function App(): JSX.Element {
     try {
       const sample = await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0, queryExtras);
       const pool = filters.hideSeen
-        ? sample.results.filter((t) => marks[`${t.mediaType}-${t.tmdbId}`] !== "seen")
+        ? sample.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen)
         : sample.results;
       if (pool.length === 0) return;
       const pick = pool[Math.floor(Math.random() * pool.length)];
@@ -355,7 +355,7 @@ export function App(): JSX.Element {
                     key={`${t.mediaType}-${t.tmdbId}`}
                     title={t}
                     providers={providers}
-                    mark={getMark(t)}
+                    markSet={getMarks(t)}
                     onSelect={setSelected}
                     onToggleMark={toggle}
                   />

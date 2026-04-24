@@ -31,8 +31,9 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { getMark, toggle } = useMarks();
-  const mark = getMark(title);
+  const { hasMark, toggle } = useMarks();
+  const savedWatchlist = hasMark(title, "watchlist");
+  const seen = hasMark(title, "seen");
 
   // When the selected title changes (e.g. via a recommendation), scroll the
   // modal back to the top so the user sees the new content.
@@ -144,51 +145,50 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
             />
           )}
           <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <h2 className="text-2xl font-semibold leading-tight">{title.title}</h2>
-                <div className="mt-1 text-sm text-mute flex items-center gap-3 flex-wrap">
-                  <span>{title.mediaType === "movie" ? "Movie" : "TV Series"}</span>
-                  {title.releaseYear && <span>{title.releaseYear}</span>}
-                  <span className="flex items-center gap-1">
-                    <span className="text-yellow-400">★</span>
-                    {title.voteAverage.toFixed(1)}
-                    <span className="text-mute">({title.voteCount.toLocaleString()})</span>
-                  </span>
-                  {runtime !== null && <span>{formatRuntime(runtime)}</span>}
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => toggle(title, "watchlist")}
-                  title={mark === "watchlist" ? "Remove from watchlist" : "Add to watchlist"}
-                  className={`rounded px-2 py-1 text-sm transition-colors ${
-                    mark === "watchlist"
-                      ? "bg-accent text-bg"
-                      : "text-mute hover:text-ink hover:bg-white/5"
-                  }`}
-                >
-                  🔖 {mark === "watchlist" ? "Saved" : "Save"}
-                </button>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1 flex-wrap">
                 <button
                   onClick={() => toggle(title, "seen")}
-                  title={mark === "seen" ? "Unmark as seen" : "Mark as seen"}
-                  className={`rounded px-2 py-1 text-sm transition-colors ${
-                    mark === "seen"
+                  title={seen ? "Unmark as seen" : "Mark as seen"}
+                  className={`rounded px-2 py-1 text-sm whitespace-nowrap transition-colors ${
+                    seen
                       ? "bg-emerald-500 text-bg"
                       : "text-mute hover:text-ink hover:bg-white/5"
                   }`}
                 >
-                  ✓ {mark === "seen" ? "Seen" : "Mark seen"}
+                  ✓ {seen ? "Unmark as seen" : "Mark as seen"}
                 </button>
                 <button
-                  onClick={onClose}
-                  className="rounded p-1 text-mute hover:text-ink hover:bg-white/5"
-                  aria-label="Close"
+                  onClick={() => toggle(title, "watchlist")}
+                  title={savedWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+                  className={`rounded px-2 py-1 text-sm whitespace-nowrap transition-colors ${
+                    savedWatchlist
+                      ? "bg-accent text-bg"
+                      : "text-mute hover:text-ink hover:bg-white/5"
+                  }`}
                 >
-                  ✕
+                  🔖 {savedWatchlist ? "Remove from watchlist" : "Add to watchlist"}
                 </button>
               </div>
+              <button
+                onClick={onClose}
+                className="rounded p-1 text-mute hover:text-ink hover:bg-white/5 shrink-0"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <h2 className="mt-2 text-2xl font-semibold leading-tight">{title.title}</h2>
+            <div className="mt-1 text-sm text-mute flex items-center gap-3 flex-wrap">
+              <span>{title.mediaType === "movie" ? "Movie" : "TV Series"}</span>
+              {title.releaseYear && <span>{title.releaseYear}</span>}
+              <span className="flex items-center gap-1">
+                <span className="text-yellow-400">★</span>
+                {title.voteAverage.toFixed(1)}
+                <span className="text-mute">({title.voteCount.toLocaleString()})</span>
+              </span>
+              {runtime !== null && <span>{formatRuntime(runtime)}</span>}
             </div>
 
             {titleGenres.length > 0 && (
