@@ -338,29 +338,42 @@ export function App(): JSX.Element {
             </div>
           </div>
           <div className="flex-1 flex items-center gap-4 justify-between min-w-0 px-4 py-3">
-            <div className="inline-flex items-center rounded-full bg-panel2 ring-1 ring-white/10 p-0.5 text-xs shrink-0">
-              <button
-                type="button"
-                onClick={() => setMode(false)}
-                className={`px-3 py-1 rounded-full transition-colors ${
-                  !filters.watchlistOnly
-                    ? "bg-white/10 text-ink"
-                    : "text-mute hover:text-ink"
-                }`}
-              >
-                Results
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode(true)}
-                className={`px-3 py-1 rounded-full transition-colors ${
-                  filters.watchlistOnly
-                    ? "bg-accent/80 text-bg"
-                    : "text-mute hover:text-ink"
-                }`}
-              >
-                Watchlist
-              </button>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="inline-flex items-center rounded-full bg-panel2 ring-1 ring-white/10 p-0.5 text-xs shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setMode(false)}
+                  className={`px-3 py-1 rounded-full transition-colors ${
+                    !filters.watchlistOnly
+                      ? "bg-white/10 text-ink"
+                      : "text-mute hover:text-ink"
+                  }`}
+                >
+                  Results
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode(true)}
+                  className={`px-3 py-1 rounded-full transition-colors ${
+                    filters.watchlistOnly
+                      ? "bg-accent/80 text-bg"
+                      : "text-mute hover:text-ink"
+                  }`}
+                >
+                  Watchlist
+                </button>
+              </div>
+              {data && (
+                <span className="text-xs text-mute truncate">
+                  {data.total.toLocaleString()}
+                  <span className="hidden sm:inline"> titles</span>
+                  {activeFilterCount > 0 && (
+                    <span className="hidden md:inline">
+                      {" "}· {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
             <div className="lg:hidden shrink-0">
               <MobileFilters
@@ -468,11 +481,6 @@ export function App(): JSX.Element {
 
           {data && (
             <>
-              <div className="mb-3 text-sm text-mute">
-                {loading ? "Loading…" : `${data.total.toLocaleString()} titles`}
-                {activeFilterCount > 0 && !loading && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"}`}
-              </div>
-
               {isEmpty && (
                 <div className="rounded-lg bg-panel p-8 text-center text-mute">
                   Nothing matches your filters.
