@@ -66,8 +66,9 @@ export function App(): JSX.Element {
     return out;
   }, [marks]);
 
-  // Serialize so identity is stable when the actual set of watchlist IDs doesn't change
-  // (prevents an unnecessary refetch when marking/unmarking 'seen').
+  // Serialize so identity is stable when the actual set of watchlist IDs
+  // doesn't change (prevents an unnecessary refetch when marking / unmarking
+  // 'seen' while Watchlist mode is on).
   const onlyIdsSig = filters.watchlistOnly ? watchlistKeys.join(",") : "";
   const queryExtras = useMemo(
     () => ({ onlyIds: onlyIdsSig ? onlyIdsSig.split(",") : undefined }),
@@ -75,6 +76,15 @@ export function App(): JSX.Element {
   );
 
   const emptyByMarks = filters.watchlistOnly && watchlistKeys.length === 0;
+
+  // Fingerprint of the filter fields that actually drive the server query.
+  // hideSeen is a pure client-side filter — toggling it shouldn't refetch or
+  // scroll the grid back to the top. Watchlist mode does swap the result set
+  // (via onlyIds) so it stays part of the signature.
+  const queryFilterSig = useMemo(() => {
+    const { hideSeen: _hideSeen, ...rest } = filters;
+    return JSON.stringify(rest);
+  }, [filters]);
 
   // While scrolling, disable pointer events site-wide so hover states don't
   // trigger on each card the cursor passes over — avoids scroll shimmer.
@@ -181,7 +191,7 @@ export function App(): JSX.Element {
   // new results aren't hidden below the previous scroll position.
   useEffect(() => {
     window.scrollTo({ top: 0 });
-  }, [filters, queryExtras]);
+  }, [queryFilterSig]);
 
   // debounced filter -> query
   useEffect(() => {
@@ -206,7 +216,11 @@ export function App(): JSX.Element {
         });
     }, 250);
     return () => clearTimeout(t);
-  }, [filters, queryExtras, emptyByMarks]);
+    // `filters` is read inside but hideSeen doesn't affect the server query,
+    // so we depend on queryFilterSig instead to avoid a useless refetch when
+    // Hide seen is toggled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryFilterSig, queryExtras, emptyByMarks]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (!data || data.results.length >= data.total || loadingMore) return;
@@ -277,34 +291,53 @@ export function App(): JSX.Element {
     }
   }, [filters, queryExtras, emptyByMarks, marks]);
 
+  // Switching between Results and Watchlist mode resets the filter sidebar —
+  // filters carry over poorly between the two contexts.
+  const setMode = useCallback(
+    (watchlistOnly: boolean) => {
+      setFilters({ ...DEFAULT_FILTERS, randomSeed: dateSeed(), watchlistOnly });
+    },
+    [],
+  );
+
   const isEmpty = !loading && data && visibleResults.length === 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
 
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur border-b border-white/5">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4 px-4 py-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-[1600px] mx-auto flex items-center">
+          <div className="flex items-center gap-3 lg:w-72 lg:shrink-0 px-4 py-3">
             <div className="h-7 w-8 sm:w-auto overflow-hidden shrink-0">
               <img src="/logo.png" alt="whatson" className="h-7 max-w-none block" />
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
-            <label
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 cursor-pointer ${
-                filters.watchlistOnly
-                  ? "bg-accent/20 ring-accent text-ink"
-                  : "bg-panel2 ring-white/10 hover:text-ink hover:ring-white/30"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={filters.watchlistOnly}
-                onChange={(e) => updateFilters({ watchlistOnly: e.target.checked })}
-                className="accent-accent"
-              />
-              Watchlist
-            </label>
+          <div className="flex-1 flex items-center gap-4 justify-between min-w-0 px-4 py-3">
+            <div className="inline-flex items-center rounded-full bg-panel2 ring-1 ring-white/10 p-0.5 text-xs shrink-0">
+              <button
+                type="button"
+                onClick={() => setMode(false)}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  !filters.watchlistOnly
+                    ? "bg-white/10 text-ink"
+                    : "text-mute hover:text-ink"
+                }`}
+              >
+                Results
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode(true)}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  filters.watchlistOnly
+                    ? "bg-accent/80 text-bg"
+                    : "text-mute hover:text-ink"
+                }`}
+              >
+                Watchlist
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
             <label
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 cursor-pointer ${
                 filters.hideSeen
@@ -365,6 +398,7 @@ export function App(): JSX.Element {
             >
               {status?.syncing ? "Syncing…" : "Refresh"}
             </button>
+            </div>
           </div>
         </div>
         {syncError && (
