@@ -99,7 +99,34 @@ export function App(): JSX.Element {
   // Hidden mark sync shortcuts: Cmd/Ctrl+Shift+E exports marks to clipboard,
   // Cmd/Ctrl+Shift+M imports from clipboard (merging additively). Unadvertised;
   // used when bouncing marks between two browser installs.
+  //
+  // `navigator.clipboard` only exists in secure contexts (HTTPS / localhost),
+  // so over HTTP on a LAN we fall back to execCommand('copy') for export and a
+  // window.prompt for import. Ugly but it keeps the feature usable on the Pi.
   useEffect(() => {
+    const copyToClipboard = async (text: string): Promise<void> => {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (!document.execCommand("copy")) throw new Error("execCommand copy failed");
+      } finally {
+        document.body.removeChild(ta);
+      }
+    };
+    const readFromClipboard = async (): Promise<string> => {
+      if (navigator.clipboard?.readText) return await navigator.clipboard.readText();
+      const input = window.prompt("Paste marks JSON to merge:");
+      if (input === null) throw new Error("cancelled");
+      return input;
+    };
     const onKey = async (e: KeyboardEvent): Promise<void> => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !e.shiftKey) return;
@@ -108,7 +135,7 @@ export function App(): JSX.Element {
         e.preventDefault();
         try {
           const json = exportMarksJson();
-          await navigator.clipboard.writeText(json);
+          await copyToClipboard(json);
           const count = Object.keys(JSON.parse(json) as Record<string, unknown>).length;
           setToast(`Copied ${count} mark${count === 1 ? "" : "s"} to clipboard`);
         } catch (err) {
@@ -117,7 +144,7 @@ export function App(): JSX.Element {
       } else if (key === "m") {
         e.preventDefault();
         try {
-          const text = await navigator.clipboard.readText();
+          const text = await readFromClipboard();
           const { imported, total } = importMarksMerge(text);
           setToast(`Imported ${imported} mark${imported === 1 ? "" : "s"} (${total} total)`);
         } catch (err) {
