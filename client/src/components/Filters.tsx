@@ -75,40 +75,26 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
         />
       </Section>
 
-      <Section label="Year">
-        <div className="flex gap-2 items-center">
-          <input
-            type="number"
-            placeholder="from"
-            value={filters.yearFrom ?? ""}
-            onChange={(e) => onChange({ yearFrom: e.target.value ? Number(e.target.value) : null })}
-            className="w-20 bg-panel2 rounded px-2 py-1 ring-1 ring-white/10 outline-none focus:ring-accent"
-          />
-          <span className="text-mute">–</span>
-          <input
-            type="number"
-            placeholder="to"
-            value={filters.yearTo ?? ""}
-            onChange={(e) => onChange({ yearTo: e.target.value ? Number(e.target.value) : null })}
-            className="w-20 bg-panel2 rounded px-2 py-1 ring-1 ring-white/10 outline-none focus:ring-accent"
-          />
-        </div>
+      <Section label={`Year: ${filters.yearFrom ?? YEAR_MIN} – ${filters.yearTo ?? YEAR_MAX}`}>
+        <YearRange
+          yearFrom={filters.yearFrom}
+          yearTo={filters.yearTo}
+          onChange={(from, to) => onChange({ yearFrom: from, yearTo: to })}
+        />
       </Section>
 
       <Section
         label="Genre"
         extra={
-          filters.genreIds.length > 1 && (
-            <label className="flex items-center gap-1.5 text-xs text-mute cursor-pointer hover:text-ink normal-case tracking-normal">
-              <input
-                type="checkbox"
-                checked={filters.genreMode === "all"}
-                onChange={(e) => onChange({ genreMode: e.target.checked ? "all" : "any" })}
-                className="accent-accent"
-              />
-              Require all selected
-            </label>
-          )
+          <label className="flex items-center gap-1.5 text-xs text-mute cursor-pointer hover:text-ink normal-case tracking-normal">
+            <input
+              type="checkbox"
+              checked={filters.genreMode === "all"}
+              onChange={(e) => onChange({ genreMode: e.target.checked ? "all" : "any" })}
+              className="accent-accent"
+            />
+            Require all selected
+          </label>
         }
       >
         <div className="flex flex-wrap gap-1.5">
@@ -197,6 +183,9 @@ function Chip({
 const RATING_STEP = 0.5;
 const RATING_MAX = 10;
 
+const YEAR_MIN = 1900;
+const YEAR_MAX = new Date().getFullYear();
+
 function RatingRange({
   min,
   max,
@@ -278,6 +267,95 @@ function RatingRange({
         value={max}
         onChange={(e) => onChange(min, Math.max(Number(e.target.value), min))}
         aria-label="Maximum rating"
+      />
+    </div>
+  );
+}
+
+function YearRange({
+  yearFrom,
+  yearTo,
+  onChange,
+}: {
+  yearFrom: number | null;
+  yearTo: number | null;
+  onChange: (from: number | null, to: number | null) => void;
+}): JSX.Element {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; lo: number; hi: number; width: number } | null>(null);
+
+  const span = YEAR_MAX - YEAR_MIN;
+  const lo = yearFrom ?? YEAR_MIN;
+  const hi = yearTo ?? YEAR_MAX;
+  const loPct = ((lo - YEAR_MIN) / span) * 100;
+  const hiPct = ((hi - YEAR_MIN) / span) * 100;
+
+  // At either endpoint, emit null so the filter reads as "unbounded" — matches
+  // the existing server contract and keeps activeFilterCount honest.
+  const emit = (newLo: number, newHi: number): void => {
+    onChange(newLo <= YEAR_MIN ? null : newLo, newHi >= YEAR_MAX ? null : newHi);
+  };
+
+  const onFillDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const track = trackRef.current;
+    if (!track) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragStart({ x: e.clientX, lo, hi, width: track.getBoundingClientRect().width });
+  };
+
+  const onFillMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragStart) return;
+    const deltaVal = ((e.clientX - dragStart.x) / dragStart.width) * span;
+    const width = dragStart.hi - dragStart.lo;
+    let newLo = dragStart.lo + deltaVal;
+    let newHi = dragStart.hi + deltaVal;
+    if (newLo < YEAR_MIN) {
+      newLo = YEAR_MIN;
+      newHi = YEAR_MIN + width;
+    }
+    if (newHi > YEAR_MAX) {
+      newHi = YEAR_MAX;
+      newLo = YEAR_MAX - width;
+    }
+    emit(Math.round(newLo), Math.round(newHi));
+  };
+
+  const onFillUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    setDragStart(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  return (
+    <div ref={trackRef} className="range-dual">
+      <div className="absolute inset-x-0 h-1 bg-panel2 rounded-full" />
+      <div
+        className="absolute h-full flex items-center cursor-grab active:cursor-grabbing"
+        style={{ left: `${loPct}%`, right: `${100 - hiPct}%`, touchAction: "none" }}
+        onPointerDown={onFillDown}
+        onPointerMove={onFillMove}
+        onPointerUp={onFillUp}
+        onPointerCancel={onFillUp}
+        aria-label="Drag to shift year range"
+      >
+        <div className="h-1 w-full bg-accent rounded-full" />
+      </div>
+      <input
+        type="range"
+        min={YEAR_MIN}
+        max={YEAR_MAX}
+        step={1}
+        value={lo}
+        onChange={(e) => emit(Math.min(Number(e.target.value), hi), hi)}
+        aria-label="Minimum year"
+      />
+      <input
+        type="range"
+        min={YEAR_MIN}
+        max={YEAR_MAX}
+        step={1}
+        value={hi}
+        onChange={(e) => emit(lo, Math.max(Number(e.target.value), lo))}
+        aria-label="Maximum year"
       />
     </div>
   );
