@@ -62,6 +62,31 @@ if (typeof window !== "undefined") {
   });
 }
 
+export function exportMarksJson(): string {
+  return JSON.stringify(current);
+}
+
+export function importMarksMerge(json: string): { imported: number; total: number } {
+  const parsed = JSON.parse(json) as unknown;
+  if (!parsed || typeof parsed !== "object") throw new Error("Not a marks object");
+  const next: Marks = { ...current };
+  let imported = 0;
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    const n = normalizeEntry(v);
+    if (!n) continue;
+    const existing = next[k] ?? {};
+    const merged: MarkSet = { ...existing };
+    if (n.watchlist) merged.watchlist = true;
+    if (n.seen) merged.seen = true;
+    next[k] = merged;
+    imported++;
+  }
+  current = next;
+  writeMarks(next);
+  listeners.forEach((l) => l(next));
+  return { imported, total: Object.keys(next).length };
+}
+
 export function useMarks(): {
   marks: Marks;
   getMarks: (t: Pick<Title, "mediaType" | "tmdbId">) => MarkSet | undefined;

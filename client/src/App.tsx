@@ -4,7 +4,7 @@ import { api } from "./api";
 import { FiltersPanel } from "./components/Filters";
 import { TitleCard } from "./components/TitleCard";
 import { TitleModal } from "./components/TitleModal";
-import { useMarks } from "./marks";
+import { exportMarksJson, importMarksMerge, useMarks } from "./marks";
 
 const PAGE_SIZE = 60;
 const SURPRISE_SAMPLE_SIZE = 500;
@@ -53,6 +53,7 @@ export function App(): JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<Title | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const reqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
 
@@ -94,6 +95,46 @@ export function App(): JSX.Element {
       document.body.classList.remove("is-scrolling");
     };
   }, []);
+
+  // Hidden mark sync shortcuts: Cmd/Ctrl+Shift+E exports marks to clipboard,
+  // Cmd/Ctrl+Shift+M imports from clipboard (merging additively). Unadvertised;
+  // used when bouncing marks between two browser installs.
+  useEffect(() => {
+    const onKey = async (e: KeyboardEvent): Promise<void> => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || !e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "e") {
+        e.preventDefault();
+        try {
+          const json = exportMarksJson();
+          await navigator.clipboard.writeText(json);
+          const count = Object.keys(JSON.parse(json) as Record<string, unknown>).length;
+          setToast(`Copied ${count} mark${count === 1 ? "" : "s"} to clipboard`);
+        } catch (err) {
+          setToast(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else if (key === "m") {
+        e.preventDefault();
+        try {
+          const text = await navigator.clipboard.readText();
+          const { imported, total } = importMarksMerge(text);
+          setToast(`Imported ${imported} mark${imported === 1 ? "" : "s"} (${total} total)`);
+        } catch (err) {
+          setToast(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Auto-dismiss the toast after a few seconds.
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
 
   // initial load
   useEffect(() => {
@@ -393,6 +434,12 @@ export function App(): JSX.Element {
           onClose={() => setSelected(null)}
           onSelect={setSelected}
         />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-panel2 text-sm text-ink px-4 py-2 rounded-lg shadow-lg ring-1 ring-white/10">
+          {toast}
+        </div>
       )}
     </div>
   );
