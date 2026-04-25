@@ -150,25 +150,6 @@ export function serviceSearchUrl(
 }
 
 /**
- * Android package names for providers whose Chrome App Links flow misbehaves
- * — currently just Disney+, which both launches the app *and* loads the URL
- * in the tab, leaving a stale page behind the app. intent:// with a package
- * match suppresses the tab navigation. Don't add providers that already work
- * via App Links (Netflix, Ziggo): a wrong package guess would break the
- * working flow by forcing fallback to the web URL.
- */
-const ANDROID_PACKAGES: Record<string, string> = {
-  disneyPlus: "com.disney.disneyplus",
-};
-
-function buildAndroidIntent(url: string, pkg: string): string {
-  const u = new URL(url);
-  const scheme = u.protocol.slice(0, -1);
-  const hostPath = u.host + u.pathname + u.search;
-  return `intent://${hostPath}#Intent;scheme=${scheme};package=${pkg};S.browser_fallback_url=${encodeURIComponent(url)};end`;
-}
-
-/**
  * Resolve a proper deep link via the server (extracts the direct URL from
  * TMDB's watch-page HTML) and open it. Falls back to the service's search URL
  * if the resolver returns null or errors.
@@ -176,9 +157,8 @@ function buildAndroidIntent(url: string, pkg: string): string {
  * On desktop opens in a new tab via a programmatic anchor click (window.open
  * returns null in Chrome/Safari with noopener, breaking success checks).
  *
- * On Android we navigate to an `intent://` URL so installed provider apps take
- * over without leaving a stale tab. Other touch devices (iOS) navigate the
- * same tab and rely on Universal Links.
+ * On touch devices we navigate the same tab and rely on App Links / Universal
+ * Links to hand off to the installed provider app.
  */
 export async function openServiceLink(
   title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
@@ -193,17 +173,9 @@ export async function openServiceLink(
   }
   if (!url) url = serviceSearchUrl(providerKey, title);
   if (!url) return;
-  if (typeof window !== "undefined") {
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    const pkg = isAndroid ? ANDROID_PACKAGES[providerKey] : undefined;
-    if (pkg) {
-      window.location.href = buildAndroidIntent(url, pkg);
-      return;
-    }
-    if (window.matchMedia("(pointer: coarse)").matches) {
-      window.location.href = url;
-      return;
-    }
+  if (typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches) {
+    window.location.href = url;
+    return;
   }
   const a = document.createElement("a");
   a.href = url;
