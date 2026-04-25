@@ -125,18 +125,25 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                     <div className="absolute inset-0 bg-gradient-to-t from-panel via-panel/40 to-transparent" />
                   </>
                 )}
-                {trailerKey && (
-                  <button
-                    onClick={() => setPlaying(true)}
-                    className="absolute inset-0 flex items-center justify-center group"
-                    aria-label="Play trailer"
-                  >
-                    <span className="flex items-center gap-2 bg-black/70 hover:bg-black/90 text-white rounded-full px-5 py-2.5 text-sm font-medium ring-1 ring-white/20 group-hover:ring-accent transition">
-                      <span className="text-lg leading-none">▶</span>
-                      Play trailer
-                    </span>
-                  </button>
-                )}
+                {/* Mount the button as soon as the header is up, but keep it
+                    invisible + non-interactive until trailerKey resolves to a
+                    real key. Fading in via transition feels less abrupt than
+                    a sudden mount. */}
+                <button
+                  onClick={() => setPlaying(true)}
+                  disabled={!trailerKey}
+                  aria-hidden={!trailerKey}
+                  tabIndex={trailerKey ? 0 : -1}
+                  className={`absolute inset-0 flex items-center justify-center group transition-opacity duration-300 ${
+                    trailerKey ? "opacity-100" : "opacity-0 pointer-events-none"
+                  }`}
+                  aria-label="Play trailer"
+                >
+                  <span className="flex items-center gap-2 bg-black/70 hover:bg-black/90 text-white rounded-full px-5 py-2.5 text-sm font-medium ring-1 ring-white/20 group-hover:ring-accent transition">
+                    <span className="text-lg leading-none">▶</span>
+                    Play trailer
+                  </span>
+                </button>
               </>
             )}
           </div>
@@ -196,7 +203,9 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                 <span className="text-mute">({title.voteCount.toLocaleString()})</span>
               </span>
               {(runtime !== null || detailsLoading) && (
-                <span className={runtime === null ? "invisible" : ""}>
+                <span
+                  className={`inline-block min-w-[3.5rem] ${runtime === null ? "invisible" : ""}`}
+                >
                   {runtime !== null ? formatRuntime(runtime) : "1h 30m"}
                 </span>
               )}
