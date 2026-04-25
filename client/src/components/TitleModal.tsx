@@ -36,6 +36,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   // meta row.
   const detailsLoading = trailerKey === undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recsScrollRef = useRef<HTMLDivElement>(null);
   const { hasMark, toggle } = useMarks();
   const savedWatchlist = hasMark(title, "watchlist");
   const seen = hasMark(title, "seen");
@@ -44,6 +45,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   // modal back to the top so the user sees the new content.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
+    if (recsScrollRef.current) recsScrollRef.current.scrollLeft = 0;
   }, [title.mediaType, title.tmdbId]);
 
   useEffect(() => {
@@ -270,7 +272,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
         {(recs === null || recs.length > 0) && (
           <div className="border-t border-white/5 px-6 py-4">
             <div className="text-xs uppercase tracking-wider text-mute mb-3">More like this</div>
-            <div className="flex gap-3 overflow-x-auto pb-1">
+            <div ref={recsScrollRef} className="flex gap-3 overflow-x-auto pb-1">
               {recs === null
                 ? Array.from({ length: 6 }).map((_, i) => (
                     <div
