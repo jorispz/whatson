@@ -150,6 +150,28 @@ export function serviceSearchUrl(
 }
 
 /**
+ * Android package names for the providers we know about. When set, a click on
+ * Android navigates to an `intent://` URL with a `browser_fallback_url`. Chrome
+ * hands off to the app via package match without loading the URL in the tab;
+ * if the app isn't installed it navigates to the fallback URL instead. Without
+ * this, Chrome would *both* hand off (App Links) *and* load the URL in a tab,
+ * leaving a stale provider page behind the app.
+ */
+const ANDROID_PACKAGES: Record<string, string> = {
+  netflix: "com.netflix.mediaclient",
+  disneyPlus: "com.disney.disneyplus",
+  hboMax: "com.wbd.stream",
+  ziggoTv: "nl.ziggogo.tv",
+};
+
+function buildAndroidIntent(url: string, pkg: string): string {
+  const u = new URL(url);
+  const scheme = u.protocol.slice(0, -1);
+  const hostPath = u.host + u.pathname + u.search;
+  return `intent://${hostPath}#Intent;scheme=${scheme};package=${pkg};S.browser_fallback_url=${encodeURIComponent(url)};end`;
+}
+
+/**
  * Resolve a proper deep link via the server (extracts the direct URL from
  * TMDB's watch-page HTML) and open it. Falls back to the service's search URL
  * if the resolver returns null or errors.
@@ -157,11 +179,9 @@ export function serviceSearchUrl(
  * On desktop opens in a new tab via a programmatic anchor click (window.open
  * returns null in Chrome/Safari with noopener, breaking success checks).
  *
- * On touch devices we navigate the same tab instead: Android App Links / iOS
- * Universal Links hand off to the streaming app and the browser doesn't
- * actually load the URL in this tab. Bfcache restores whatson when the user
- * comes back. With target="_blank" Chrome both opened the app *and* loaded the
- * URL in the new tab, leaving a stale provider page behind the app.
+ * On Android we navigate to an `intent://` URL so installed provider apps take
+ * over without leaving a stale tab. Other touch devices (iOS) navigate the
+ * same tab and rely on Universal Links.
  */
 export async function openServiceLink(
   title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
@@ -176,10 +196,17 @@ export async function openServiceLink(
   }
   if (!url) url = serviceSearchUrl(providerKey, title);
   if (!url) return;
-  const isTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
-  if (isTouch) {
-    window.location.href = url;
-    return;
+  if (typeof window !== "undefined") {
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const pkg = isAndroid ? ANDROID_PACKAGES[providerKey] : undefined;
+    if (pkg) {
+      window.location.href = buildAndroidIntent(url, pkg);
+      return;
+    }
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      window.location.href = url;
+      return;
+    }
   }
   const a = document.createElement("a");
   a.href = url;
