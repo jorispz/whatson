@@ -150,18 +150,15 @@ export function serviceSearchUrl(
 }
 
 /**
- * Android package names for the providers we know about. When set, a click on
- * Android navigates to an `intent://` URL with a `browser_fallback_url`. Chrome
- * hands off to the app via package match without loading the URL in the tab;
- * if the app isn't installed it navigates to the fallback URL instead. Without
- * this, Chrome would *both* hand off (App Links) *and* load the URL in a tab,
- * leaving a stale provider page behind the app.
+ * Android package names for providers whose Chrome App Links flow misbehaves
+ * — currently just Disney+, which both launches the app *and* loads the URL
+ * in the tab, leaving a stale page behind the app. intent:// with a package
+ * match suppresses the tab navigation. Don't add providers that already work
+ * via App Links (Netflix, Ziggo): a wrong package guess would break the
+ * working flow by forcing fallback to the web URL.
  */
 const ANDROID_PACKAGES: Record<string, string> = {
-  netflix: "com.netflix.mediaclient",
   disneyPlus: "com.disney.disneyplus",
-  hboMax: "com.wbd.stream",
-  ziggoTv: "nl.ziggogo.tv",
 };
 
 function buildAndroidIntent(url: string, pkg: string): string {
