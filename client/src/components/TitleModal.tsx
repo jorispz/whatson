@@ -31,6 +31,10 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const [certification, setCertification] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
+  // True until the /api/details fetch resolves. Used to reserve layout space
+  // for the runtime / certification pills so they don't pop in and grow the
+  // meta row.
+  const detailsLoading = trailerKey === undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const { hasMark, toggle } = useMarks();
   const savedWatchlist = hasMark(title, "watchlist");
@@ -191,10 +195,18 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                 {title.voteAverage.toFixed(1)}
                 <span className="text-mute">({title.voteCount.toLocaleString()})</span>
               </span>
-              {runtime !== null && <span>{formatRuntime(runtime)}</span>}
-              {certification && (
-                <span className="px-1.5 py-0.5 rounded ring-1 ring-white/15 text-[11px] text-ink/80">
-                  {certification}
+              {(runtime !== null || detailsLoading) && (
+                <span className={runtime === null ? "invisible" : ""}>
+                  {runtime !== null ? formatRuntime(runtime) : "1h 30m"}
+                </span>
+              )}
+              {(certification || detailsLoading) && (
+                <span
+                  className={`inline-flex items-center px-1.5 rounded ring-1 ring-white/15 text-[11px] text-ink/80 leading-5 ${
+                    !certification ? "invisible" : ""
+                  }`}
+                >
+                  {certification ?? "AL"}
                 </span>
               )}
             </div>
@@ -246,11 +258,25 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
           </div>
         </div>
 
-        {recs && recs.length > 0 && (
+        {(recs === null || recs.length > 0) && (
           <div className="border-t border-white/5 px-6 py-4">
             <div className="text-xs uppercase tracking-wider text-mute mb-3">More like this</div>
             <div className="flex gap-3 overflow-x-auto pb-1">
-              {recs.map((r) => (
+              {recs === null
+                ? Array.from({ length: 6 }).map((_, i) => (
+                    <div
+                      key={i}
+                      aria-hidden="true"
+                      className="shrink-0 w-28 rounded-md overflow-hidden bg-panel2 ring-1 ring-white/5 animate-pulse"
+                    >
+                      <div className="aspect-[2/3] bg-white/5" />
+                      <div className="p-2 space-y-1.5">
+                        <div className="h-3 bg-white/5 rounded" />
+                        <div className="h-2 bg-white/5 rounded w-2/3" />
+                      </div>
+                    </div>
+                  ))
+                : recs.map((r) => (
                 <button
                   key={`${r.mediaType}-${r.tmdbId}`}
                   onClick={() => onSelect(r)}

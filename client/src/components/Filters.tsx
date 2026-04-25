@@ -29,7 +29,10 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
 
   return (
     <div className="flex flex-col gap-6 p-4 text-sm">
-      <div>
+      {/* Search lives at the top of the main content area on mobile (see App.tsx) so the
+          input is reachable without opening the drawer. Hide it here on those breakpoints
+          to avoid duplication. */}
+      <div className="hidden lg:block">
         <input
           type="search"
           value={filters.q}
