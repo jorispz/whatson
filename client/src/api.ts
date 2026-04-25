@@ -151,13 +151,17 @@ export function serviceSearchUrl(
 
 /**
  * Resolve a proper deep link via the server (extracts the direct URL from
- * TMDB's watch-page HTML) and open it in a new tab. Falls back to the
- * service's search URL if the resolver returns null or errors.
+ * TMDB's watch-page HTML) and open it. Falls back to the service's search URL
+ * if the resolver returns null or errors.
  *
- * Uses a programmatic anchor-click rather than window.open, because
- * `window.open(url, "_blank", "noopener")` returns null in Chrome/Safari —
- * which would make any return-value check misread the success as a blocked
- * popup and navigate the current tab on top of the new one.
+ * On desktop opens in a new tab via a programmatic anchor click (window.open
+ * returns null in Chrome/Safari with noopener, breaking success checks).
+ *
+ * On touch devices we navigate the same tab instead: Android App Links / iOS
+ * Universal Links hand off to the streaming app and the browser doesn't
+ * actually load the URL in this tab. Bfcache restores whatson when the user
+ * comes back. With target="_blank" Chrome both opened the app *and* loaded the
+ * URL in the new tab, leaving a stale provider page behind the app.
  */
 export async function openServiceLink(
   title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
@@ -172,6 +176,11 @@ export async function openServiceLink(
   }
   if (!url) url = serviceSearchUrl(providerKey, title);
   if (!url) return;
+  const isTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  if (isTouch) {
+    window.location.href = url;
+    return;
+  }
   const a = document.createElement("a");
   a.href = url;
   a.target = "_blank";
