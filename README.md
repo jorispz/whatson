@@ -57,6 +57,15 @@ grid, tuned for deliberate digging rather than passive scrolling.
 - Data is stored in `server/data/whatson.db` (SQLite). Delete the file to start fresh.
 - Availability data is sourced from JustWatch via TMDB and can lag by a day or two.
 - The "HBO Max" provider is resolved by name at sync time, so rebrands (Max ↔ HBO Max) are handled automatically.
+- Provider deep links are flaky and best-effort. The server scrapes
+  TMDB's watch page for JustWatch click-out URLs, follows the affiliate
+  redirect chain, and falls back to the streamer's on-site search if the
+  resolved URL doesn't end up on the streamer's domain. Even when
+  resolution succeeds, mobile behavior varies per provider: some apps
+  open straight to the title, some land on their home screen, some
+  leave a stale browser tab behind after handing off via Android App
+  Links / iOS Universal Links. Treat the click as "take me to roughly
+  the right place," not as a guaranteed deep link.
 
 ## License
 
