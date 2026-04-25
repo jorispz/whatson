@@ -53,8 +53,11 @@ export const api = {
   details: (
     mediaType: "movie" | "tv",
     id: number,
-  ): Promise<{ youtubeKey: string | null; runtime: number | null }> =>
-    fetchJson(`/api/details/${mediaType}/${id}`),
+  ): Promise<{
+    youtubeKey: string | null;
+    runtime: number | null;
+    certification: string | null;
+  }> => fetchJson(`/api/details/${mediaType}/${id}`),
   recommendations: (mediaType: "movie" | "tv", id: number): Promise<{ results: Title[] }> =>
     fetchJson(`/api/recommendations/${mediaType}/${id}`),
   deeplink: (

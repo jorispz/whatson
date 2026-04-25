@@ -28,6 +28,7 @@ interface Props {
 export function TitleModal({ title, providers, genres, onClose, onSelect }: Props): JSX.Element {
   const [trailerKey, setTrailerKey] = useState<string | null | undefined>(undefined);
   const [runtime, setRuntime] = useState<number | null>(null);
+  const [certification, setCertification] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -53,6 +54,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
     let cancelled = false;
     setTrailerKey(undefined);
     setRuntime(null);
+    setCertification(null);
     setPlaying(false);
     setRecs(null);
     api
@@ -61,6 +63,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
         if (cancelled) return;
         setTrailerKey(res.youtubeKey);
         setRuntime(res.runtime);
+        setCertification(res.certification);
       })
       .catch(() => {
         if (!cancelled) setTrailerKey(null);
@@ -156,7 +159,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                       : "text-mute hover:text-ink hover:bg-white/5"
                   }`}
                 >
-                  ✓ {seen ? "Unmark as seen" : "Mark as seen"}
+                  ✓ {seen ? "Seen" : "Mark as seen"}
                 </button>
                 <button
                   onClick={() => toggle(title, "watchlist")}
@@ -167,7 +170,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                       : "text-mute hover:text-ink hover:bg-white/5"
                   }`}
                 >
-                  🔖 {savedWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+                  🔖 {savedWatchlist ? "Saved" : "Add to watchlist"}
                 </button>
               </div>
               <button
@@ -189,6 +192,11 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                 <span className="text-mute">({title.voteCount.toLocaleString()})</span>
               </span>
               {runtime !== null && <span>{formatRuntime(runtime)}</span>}
+              {certification && (
+                <span className="px-1.5 py-0.5 rounded ring-1 ring-white/15 text-[11px] text-ink/80">
+                  {certification}
+                </span>
+              )}
             </div>
 
             {titleGenres.length > 0 && (

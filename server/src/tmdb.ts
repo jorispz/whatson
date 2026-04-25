@@ -93,14 +93,49 @@ export async function fetchRecommendations(mediaType: MediaType, id: number): Pr
 export interface TmdbTitleDetails {
   videos: TmdbVideo[];
   runtime: number | null;
+  certification: string | null;
 }
 
+interface TmdbReleaseDates {
+  results?: {
+    iso_3166_1: string;
+    release_dates: { certification: string }[];
+  }[];
+}
+
+interface TmdbContentRatings {
+  results?: { iso_3166_1: string; rating: string }[];
+}
+
+// Approximate translations from US ratings to NL Kijkwijzer-style age codes
+// so a Dutch user doesn't have to mentally interpret "PG-13" or "TV-MA".
+// The systems differ in detail; these are pragmatic equivalents, not exact.
+const US_TO_NL_MOVIE: Record<string, string> = {
+  G: "AL",
+  PG: "6",
+  "PG-13": "12",
+  R: "16",
+  "NC-17": "18",
+};
+const US_TO_NL_TV: Record<string, string> = {
+  "TV-Y": "AL",
+  "TV-Y7": "6",
+  "TV-G": "AL",
+  "TV-PG": "6",
+  "TV-14": "14",
+  "TV-MA": "16",
+};
+
 export async function fetchTitleDetails(mediaType: MediaType, id: number): Promise<TmdbTitleDetails> {
+  const append = mediaType === "movie" ? "videos,release_dates" : "videos,content_ratings";
   const res = await tmdb<{
     runtime?: number;
     episode_run_time?: number[];
     videos?: { results: TmdbVideo[] };
-  }>(`/${mediaType}/${id}`, { language: config.language, append_to_response: "videos" });
+    release_dates?: TmdbReleaseDates;
+    content_ratings?: TmdbContentRatings;
+  }>(`/${mediaType}/${id}`, { language: config.language, append_to_response: append });
+
   let runtime: number | null = null;
   if (mediaType === "movie") {
     if (typeof res.runtime === "number" && res.runtime > 0) runtime = res.runtime;
@@ -108,7 +143,29 @@ export async function fetchTitleDetails(mediaType: MediaType, id: number): Promi
     const first = res.episode_run_time?.[0];
     if (typeof first === "number" && first > 0) runtime = first;
   }
-  return { videos: res.videos?.results ?? [], runtime };
+
+  // Prefer the local (NL) certification; fall back to US translated into
+  // the NL age equivalent so the modal shows something a Dutch user can
+  // read at a glance.
+  const findCert = (country: string): string | null => {
+    if (mediaType === "movie") {
+      const row = res.release_dates?.results?.find((r) => r.iso_3166_1 === country);
+      const cert = row?.release_dates.find((d) => d.certification.length > 0)?.certification;
+      return cert ?? null;
+    }
+    const row = res.content_ratings?.results?.find((r) => r.iso_3166_1 === country);
+    return row?.rating && row.rating.length > 0 ? row.rating : null;
+  };
+  let certification = findCert("NL");
+  if (!certification) {
+    const us = findCert("US");
+    if (us) {
+      const map = mediaType === "movie" ? US_TO_NL_MOVIE : US_TO_NL_TV;
+      certification = map[us] ?? null;
+    }
+  }
+
+  return { videos: res.videos?.results ?? [], runtime, certification };
 }
 
 export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {

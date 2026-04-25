@@ -67,7 +67,10 @@ function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number
     .filter((x): x is { mediaType: "movie" | "tv"; id: number } => x !== null);
 }
 
-const detailsCache = new Map<string, { youtubeKey: string | null; runtime: number | null; expires: number }>();
+const detailsCache = new Map<
+  string,
+  { youtubeKey: string | null; runtime: number | null; certification: string | null; expires: number }
+>();
 const DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const recsCache = new Map<string, { ids: number[]; expires: number }>();
@@ -338,15 +341,24 @@ api.get("/details/:mediaType/:id", async (req, res) => {
   const cacheKey = `${mediaType}:${id}`;
   const cached = detailsCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
-    res.json({ youtubeKey: cached.youtubeKey, runtime: cached.runtime });
+    res.json({
+      youtubeKey: cached.youtubeKey,
+      runtime: cached.runtime,
+      certification: cached.certification,
+    });
     return;
   }
   try {
     const details = await fetchTitleDetails(mediaType, id);
     const trailer = pickBestTrailer(details.videos);
     const youtubeKey = trailer?.key ?? null;
-    detailsCache.set(cacheKey, { youtubeKey, runtime: details.runtime, expires: Date.now() + DETAILS_TTL_MS });
-    res.json({ youtubeKey, runtime: details.runtime });
+    detailsCache.set(cacheKey, {
+      youtubeKey,
+      runtime: details.runtime,
+      certification: details.certification,
+      expires: Date.now() + DETAILS_TTL_MS,
+    });
+    res.json({ youtubeKey, runtime: details.runtime, certification: details.certification });
   } catch (err) {
     console.error("details fetch failed:", err);
     res.status(502).json({ error: "upstream error" });
