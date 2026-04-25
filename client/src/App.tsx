@@ -6,6 +6,9 @@ import { FiltersPanel } from "./components/Filters";
 import { TitleCard } from "./components/TitleCard";
 import { TitleModal } from "./components/TitleModal";
 import { exportMarksJson, importMarksMerge, useMarks } from "./marks";
+import { setActiveProfile, useProfileState } from "./profile";
+import { ProfilePicker } from "./components/ProfilePicker";
+import { SettingsModal } from "./components/SettingsModal";
 
 const PAGE_SIZE = 60;
 const SURPRISE_SAMPLE_SIZE = 500;
@@ -55,8 +58,10 @@ export function App(): JSX.Element {
   const [selected, setSelected] = useState<Title | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const reqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
+  const profileState = useProfileState();
 
   const watchlistKeys = useMemo(() => {
     const out: string[] = [];
@@ -374,7 +379,7 @@ export function App(): JSX.Element {
                 </span>
               )}
             </div>
-            <div className="lg:hidden shrink-0">
+            <div className="lg:hidden shrink-0 flex items-center gap-2">
               <MobileFilters
                 filters={filters}
                 providers={providers}
@@ -384,9 +389,15 @@ export function App(): JSX.Element {
                 activeCount={activeFilterCount}
                 onSurprise={surpriseMe}
                 canSurprise={!!data && data.results.length > 0}
-                onRefresh={onSync}
-                syncing={!!status?.syncing}
               />
+              <button
+                onClick={() => setSettingsOpen(true)}
+                title="Settings"
+                aria-label="Settings"
+                className="rounded-full p-1.5 text-mute hover:text-ink hover:bg-white/5"
+              >
+                <SettingsIcon />
+              </button>
             </div>
             <div className="hidden lg:flex items-center gap-2 text-xs text-mute flex-wrap justify-end">
             <label
@@ -436,18 +447,13 @@ export function App(): JSX.Element {
             >
               🎲 Surprise me
             </button>
-            {status && (
-              <span className="hidden lg:inline ml-1">
-                {status.titleCount.toLocaleString()} titles
-                {status.lastSyncAt && ` · synced ${timeAgo(status.lastSyncAt)}`}
-              </span>
-            )}
             <button
-              onClick={onSync}
-              disabled={status?.syncing}
-              className="rounded px-3 py-1.5 bg-panel2 ring-1 ring-white/10 hover:ring-accent disabled:opacity-60"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              aria-label="Settings"
+              className="rounded p-1.5 text-mute hover:text-ink hover:bg-white/5"
             >
-              {status?.syncing ? "Syncing…" : "Refresh"}
+              ⚙
             </button>
             </div>
           </div>
@@ -537,6 +543,20 @@ export function App(): JSX.Element {
           {toast}
         </div>
       )}
+
+      {profileState.needsPick && (
+        <ProfilePicker profiles={profileState.profiles} onPick={setActiveProfile} />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          profiles={profileState.profiles}
+          activeId={profileState.activeId}
+          status={status}
+          onSync={onSync}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -550,8 +570,6 @@ function MobileFilters({
   activeCount,
   onSurprise,
   canSurprise,
-  onRefresh,
-  syncing,
 }: {
   filters: Filters;
   providers: Provider[];
@@ -561,8 +579,6 @@ function MobileFilters({
   activeCount: number;
   onSurprise: () => void;
   canSurprise: boolean;
-  onRefresh: () => void;
-  syncing: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const close = (): void => setOpen(false);
@@ -642,13 +658,6 @@ function MobileFilters({
               >
                 🎲 Surprise me
               </button>
-              <button
-                onClick={onRefresh}
-                disabled={syncing}
-                className="flex-1 rounded px-3 py-2 bg-panel2 ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-60"
-              >
-                {syncing ? "Syncing…" : "Refresh"}
-              </button>
             </div>
           </div>
         </div>,
@@ -673,7 +682,26 @@ function countActive(f: Filters): number {
   return n;
 }
 
-function timeAgo(iso: string): string {
+function SettingsIcon(): JSX.Element {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="w-5 h-5"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+export function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.round(diff / 60_000);
   if (mins < 1) return "just now";

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { db, defaultProfileId, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
 import { fetchRecommendations, fetchTitleDetails, pickBestTrailer } from "./tmdb.js";
@@ -599,10 +599,131 @@ function rowsToMarksObject(rows: MarkRow[]): Record<string, { watchlist?: true; 
   return out;
 }
 
-api.get("/marks", (_req, res) => {
+/**
+ * Resolve which profile this request is acting on. Clients send the active
+ * profile id via X-Whatson-Profile; missing / unknown / malformed values
+ * fall back to the seeded default profile so older clients (and curl) keep
+ * working unchanged.
+ */
+function activeProfileId(req: Request): number {
+  const raw = req.header("x-whatson-profile");
+  if (raw) {
+    const id = Number(raw);
+    if (Number.isFinite(id) && id > 0) {
+      const exists = db.prepare("SELECT 1 FROM profiles WHERE id = ?").get(id);
+      if (exists) return id;
+    }
+  }
+  return defaultProfileId();
+}
+
+interface ProfileRow {
+  id: number;
+  key: string;
+  name: string;
+  created_at: string;
+}
+
+function getProfile(id: number): ProfileRow | undefined {
+  return db.prepare("SELECT id, key, name, created_at FROM profiles WHERE id = ?").get(id) as
+    | ProfileRow
+    | undefined;
+}
+
+function nameTaken(name: string, exceptId?: number): boolean {
+  const row = db
+    .prepare(
+      exceptId !== undefined
+        ? "SELECT 1 FROM profiles WHERE lower(name) = lower(?) AND id != ?"
+        : "SELECT 1 FROM profiles WHERE lower(name) = lower(?)",
+    )
+    .get(...(exceptId !== undefined ? [name, exceptId] : [name]));
+  return Boolean(row);
+}
+
+function newProfileKey(): string {
+  // Random non-'default' key; we don't expose this to the user, but it's
+  // useful for disambiguation in logs / future features.
+  return `p_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+api.get("/profiles", (_req, res) => {
+  const rows = db
+    .prepare("SELECT id, key, name, created_at FROM profiles ORDER BY created_at, id")
+    .all() as ProfileRow[];
+  res.json(rows);
+});
+
+api.post("/profiles", (req, res) => {
+  const body = (req.body ?? {}) as { name?: unknown };
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
+    res.status(400).json({ error: "name required" });
+    return;
+  }
+  if (nameTaken(name)) {
+    res.status(409).json({ error: "name already taken" });
+    return;
+  }
+  const info = db
+    .prepare("INSERT INTO profiles (key, name) VALUES (?, ?)")
+    .run(newProfileKey(), name);
+  const created = getProfile(Number(info.lastInsertRowid));
+  res.status(201).json(created);
+});
+
+api.patch("/profiles/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const existing = getProfile(id);
+  if (!existing) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const body = (req.body ?? {}) as { name?: unknown };
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
+    res.status(400).json({ error: "name required" });
+    return;
+  }
+  if (nameTaken(name, id)) {
+    res.status(409).json({ error: "name already taken" });
+    return;
+  }
+  db.prepare("UPDATE profiles SET name = ? WHERE id = ?").run(name, id);
+  res.json(getProfile(id));
+});
+
+api.delete("/profiles/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const existing = getProfile(id);
+  if (!existing) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const count = (
+    db.prepare("SELECT COUNT(*) AS n FROM profiles").get() as { n: number }
+  ).n;
+  if (count <= 1) {
+    res.status(400).json({ error: "cannot delete the last remaining profile" });
+    return;
+  }
+  // Marks cascade via FK ON DELETE CASCADE.
+  db.prepare("DELETE FROM profiles WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
+api.get("/marks", (req, res) => {
   const rows = db
     .prepare("SELECT tmdb_id, media_type, watchlist, seen FROM marks WHERE profile_id = ?")
-    .all(defaultProfileId()) as MarkRow[];
+    .all(activeProfileId(req)) as MarkRow[];
   res.json(rowsToMarksObject(rows));
 });
 
@@ -620,7 +741,7 @@ api.put("/marks/:mediaType/:tmdbId", (req, res) => {
   const body = (req.body ?? {}) as { watchlist?: unknown; seen?: unknown };
   const watchlist = body.watchlist === true ? 1 : 0;
   const seen = body.seen === true ? 1 : 0;
-  const profileId = defaultProfileId();
+  const profileId = activeProfileId(req);
   if (!watchlist && !seen) {
     db.prepare(
       "DELETE FROM marks WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
@@ -651,7 +772,7 @@ api.post("/marks/import", (req, res) => {
     res.status(400).json({ error: "invalid body" });
     return;
   }
-  const profileId = defaultProfileId();
+  const profileId = activeProfileId(req);
   const stmt = db.prepare(
     `
     INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at)

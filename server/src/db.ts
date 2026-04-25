@@ -96,11 +96,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_marks_profile ON marks(profile_id);
 `);
 
+/**
+ * Fallback profile id used when a request doesn't specify one. Picks the
+ * oldest profile by creation order — works regardless of whether the seeded
+ * 'default' row still exists, so any profile can be deleted as long as at
+ * least one remains.
+ */
 export function defaultProfileId(): number {
-  const row = db.prepare("SELECT id FROM profiles WHERE key = 'default'").get() as
-    | { id: number }
-    | undefined;
-  if (!row) throw new Error("default profile missing");
+  const row = db
+    .prepare("SELECT id FROM profiles ORDER BY created_at, id LIMIT 1")
+    .get() as { id: number } | undefined;
+  if (!row) throw new Error("no profiles in database");
   return row.id;
 }
 

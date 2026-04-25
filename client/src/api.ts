@@ -37,10 +37,30 @@ export function buildTitlesQuery(
   return params.toString();
 }
 
+// localStorage key holding the active profile id. Read on every request so a
+// switch performed elsewhere (or in another tab) doesn't need to thread state
+// through every API call site. Server falls back to the default profile if
+// the header is missing or invalid.
+const PROFILE_STORAGE_KEY = "whatson.profileId.v1";
+
+function activeProfileHeader(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+  return raw ? { "X-Whatson-Profile": raw } : {};
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const headers = { ...activeProfileHeader(), ...(init?.headers ?? {}) };
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as T;
+}
+
+export interface ProfileDto {
+  id: number;
+  key: string;
+  name: string;
+  created_at: string;
 }
 
 export const api = {
@@ -86,6 +106,23 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
+  },
+  profiles: {
+    list: (): Promise<ProfileDto[]> => fetchJson("/api/profiles"),
+    create: (name: string): Promise<ProfileDto> =>
+      fetchJson("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      }),
+    rename: (id: number, name: string): Promise<ProfileDto> =>
+      fetchJson(`/api/profiles/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      }),
+    remove: (id: number): Promise<{ ok: true }> =>
+      fetchJson(`/api/profiles/${id}`, { method: "DELETE" }),
   },
 };
 
