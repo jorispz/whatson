@@ -226,6 +226,17 @@ api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
     const clickoutTarget = pickDirectUrl(html, providerRow.id);
     let url = clickoutTarget ? await resolveRedirects(clickoutTarget) : null;
     const site = PROVIDER_SITES[providerKey];
+    if (site && url && matchesProviderHost(url, site)) {
+      // Strip affiliate tracking query/fragment that rides along on the redirect
+      // chain. Disney+ in particular won't deep-link into its app from URLs with
+      // a query string — its intent filter does a strict path-pattern match.
+      try {
+        const u = new URL(url);
+        url = `${u.protocol}//${u.host}${u.pathname}`;
+      } catch {
+        /* keep url as-is */
+      }
+    }
     if (site && (!url || !matchesProviderHost(url, site))) {
       const titleRow = db
         .prepare("SELECT title FROM titles WHERE tmdb_id = ? AND media_type = ?")
