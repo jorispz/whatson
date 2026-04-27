@@ -458,6 +458,24 @@ export function App(): JSX.Element {
             </div>
           </div>
         </div>
+        <div className="lg:hidden max-w-[1600px] mx-auto px-4 pb-3">
+          <input
+            type="search"
+            value={filters.q}
+            onChange={(e) => updateFilters({ q: e.target.value })}
+            placeholder="Search title…"
+            className="w-full bg-panel2 rounded-md px-3 py-2 text-sm ring-1 ring-white/10 focus:ring-accent outline-none"
+          />
+          <label className="flex items-center gap-2 mt-2 text-xs text-mute hover:text-ink cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filters.includeOverview}
+              onChange={(e) => updateFilters({ includeOverview: e.target.checked })}
+              className="accent-accent"
+            />
+            <span className={filters.includeOverview ? "text-ink" : ""}>Also search in summary</span>
+          </label>
+        </div>
         {syncError && (
           <div className="bg-red-900/40 text-red-200 text-xs px-4 py-1">{syncError}</div>
         )}
@@ -475,25 +493,6 @@ export function App(): JSX.Element {
         </aside>
 
         <main className="flex-1 min-w-0 px-4 pt-2 pb-4 lg:pt-4">
-          <div className="lg:hidden mb-3">
-            <input
-              type="search"
-              value={filters.q}
-              onChange={(e) => updateFilters({ q: e.target.value })}
-              placeholder="Search title…"
-              className="w-full bg-panel2 rounded-md px-3 py-2 text-sm ring-1 ring-white/10 focus:ring-accent outline-none"
-            />
-            <label className="flex items-center gap-2 mt-2 text-xs text-mute hover:text-ink cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filters.includeOverview}
-                onChange={(e) => updateFilters({ includeOverview: e.target.checked })}
-                className="accent-accent"
-              />
-              <span className={filters.includeOverview ? "text-ink" : ""}>Also search in summary</span>
-            </label>
-          </div>
-
           {needsSync && (
             <div className="rounded-lg bg-panel p-6 text-center">
               <div className="text-lg font-medium mb-1">Your catalog is empty</div>
