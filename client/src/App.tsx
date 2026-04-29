@@ -536,15 +536,14 @@ export function App(): JSX.Element {
               )}
             </>
           )}
+          <footer className="mt-8 text-xs text-mute flex items-center justify-center gap-2 flex-wrap">
+            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+            <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer" aria-label="TMDB">
+              <img src="/tmdb-logo.svg" alt="TMDB" className="h-3 opacity-80 hover:opacity-100" />
+            </a>
+          </footer>
         </main>
       </div>
-
-      <footer className="border-t border-white/5 px-4 py-3 text-xs text-mute text-center">
-        This product uses the TMDB API but is not endorsed or certified by TMDB.{" "}
-        <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer" className="underline hover:text-ink">
-          TMDB
-        </a>
-      </footer>
 
       {selected && (
         <TitleModal
