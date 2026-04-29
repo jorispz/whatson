@@ -125,7 +125,7 @@ function MarkButton({
 
 function ProviderBadge({ provider, title }: { provider: Provider; title: Title }): JSX.Element {
   const [resolving, setResolving] = useState(false);
-  const logo = provider.logo_path ? `https://image.tmdb.org/t/p/w45${provider.logo_path}` : null;
+  const logo = provider.logo_path ? `/providers/${provider.key}.jpg` : null;
   const className =
     "inline-flex items-center justify-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10 hover:ring-accent transition-colors disabled:opacity-70";
 

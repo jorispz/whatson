@@ -348,7 +348,7 @@ function ServiceButton({ service, title }: { service: Provider; title: Title }):
         <span className="whatson-spinner text-mute" style={{ fontSize: "16px" }} aria-label="Opening…" />
       ) : (
         service.logo_path && (
-          <img src={`https://image.tmdb.org/t/p/w45${service.logo_path}`} alt="" className="h-5 w-5 rounded" />
+          <img src={`/providers/${service.key}.jpg`} alt="" className="h-5 w-5 rounded" />
         )
       )}
       <span className="text-sm">{service.name}</span>

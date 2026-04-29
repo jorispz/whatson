@@ -123,7 +123,7 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
                 className="accent-accent"
               />
               {p.logo_path && (
-                <img src={`https://image.tmdb.org/t/p/w45${p.logo_path}`} alt="" className="h-4 w-4 rounded" />
+                <img src={`/providers/${p.key}.jpg`} alt="" className="h-4 w-4 rounded" />
               )}
               <span className={filters.providerIds.includes(p.id) ? "text-ink" : ""}>{p.name}</span>
             </label>
