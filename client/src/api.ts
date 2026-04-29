@@ -77,6 +77,8 @@ export const api = {
     youtubeKey: string | null;
     runtime: number | null;
     certification: string | null;
+    seasonCount: number | null;
+    episodeCount: number | null;
   }> => fetchJson(`/api/details/${mediaType}/${id}`),
   recommendations: (mediaType: "movie" | "tv", id: number): Promise<{ results: Title[] }> =>
     fetchJson(`/api/recommendations/${mediaType}/${id}`),

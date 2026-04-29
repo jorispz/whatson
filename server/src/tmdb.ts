@@ -94,6 +94,8 @@ export interface TmdbTitleDetails {
   videos: TmdbVideo[];
   runtime: number | null;
   certification: string | null;
+  seasonCount: number | null;
+  episodeCount: number | null;
 }
 
 interface TmdbReleaseDates {
@@ -131,17 +133,27 @@ export async function fetchTitleDetails(mediaType: MediaType, id: number): Promi
   const res = await tmdb<{
     runtime?: number;
     episode_run_time?: number[];
+    number_of_seasons?: number;
+    number_of_episodes?: number;
     videos?: { results: TmdbVideo[] };
     release_dates?: TmdbReleaseDates;
     content_ratings?: TmdbContentRatings;
   }>(`/${mediaType}/${id}`, { language: config.language, append_to_response: append });
 
   let runtime: number | null = null;
+  let seasonCount: number | null = null;
+  let episodeCount: number | null = null;
   if (mediaType === "movie") {
     if (typeof res.runtime === "number" && res.runtime > 0) runtime = res.runtime;
   } else {
     const first = res.episode_run_time?.[0];
     if (typeof first === "number" && first > 0) runtime = first;
+    if (typeof res.number_of_seasons === "number" && res.number_of_seasons > 0) {
+      seasonCount = res.number_of_seasons;
+    }
+    if (typeof res.number_of_episodes === "number" && res.number_of_episodes > 0) {
+      episodeCount = res.number_of_episodes;
+    }
   }
 
   // Prefer the local (NL) certification; fall back to US translated into
@@ -165,7 +177,7 @@ export async function fetchTitleDetails(mediaType: MediaType, id: number): Promi
     }
   }
 
-  return { videos: res.videos?.results ?? [], runtime, certification };
+  return { videos: res.videos?.results ?? [], runtime, certification, seasonCount, episodeCount };
 }
 
 export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {

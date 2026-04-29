@@ -69,7 +69,14 @@ function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number
 
 const detailsCache = new Map<
   string,
-  { youtubeKey: string | null; runtime: number | null; certification: string | null; expires: number }
+  {
+    youtubeKey: string | null;
+    runtime: number | null;
+    certification: string | null;
+    seasonCount: number | null;
+    episodeCount: number | null;
+    expires: number;
+  }
 >();
 const DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -356,6 +363,8 @@ api.get("/details/:mediaType/:id", async (req, res) => {
       youtubeKey: cached.youtubeKey,
       runtime: cached.runtime,
       certification: cached.certification,
+      seasonCount: cached.seasonCount,
+      episodeCount: cached.episodeCount,
     });
     return;
   }
@@ -367,9 +376,17 @@ api.get("/details/:mediaType/:id", async (req, res) => {
       youtubeKey,
       runtime: details.runtime,
       certification: details.certification,
+      seasonCount: details.seasonCount,
+      episodeCount: details.episodeCount,
       expires: Date.now() + DETAILS_TTL_MS,
     });
-    res.json({ youtubeKey, runtime: details.runtime, certification: details.certification });
+    res.json({
+      youtubeKey,
+      runtime: details.runtime,
+      certification: details.certification,
+      seasonCount: details.seasonCount,
+      episodeCount: details.episodeCount,
+    });
   } catch (err) {
     console.error("details fetch failed:", err);
     res.status(502).json({ error: "upstream error" });

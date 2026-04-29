@@ -17,6 +17,13 @@ function formatRuntime(min: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+function formatTvLength(seasons: number | null, episodes: number | null): string | null {
+  const sLabel = seasons !== null ? `${seasons} ${seasons === 1 ? "season" : "seasons"}` : null;
+  const eLabel = episodes !== null ? `${episodes} ${episodes === 1 ? "episode" : "episodes"}` : null;
+  if (sLabel && eLabel) return `${sLabel} · ${eLabel}`;
+  return sLabel ?? eLabel;
+}
+
 interface Props {
   title: Title;
   providers: Provider[];
@@ -29,6 +36,8 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const [trailerKey, setTrailerKey] = useState<string | null | undefined>(undefined);
   const [runtime, setRuntime] = useState<number | null>(null);
   const [certification, setCertification] = useState<string | null>(null);
+  const [seasonCount, setSeasonCount] = useState<number | null>(null);
+  const [episodeCount, setEpisodeCount] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
   // True until the /api/details fetch resolves. Used to reserve layout space
@@ -61,6 +70,8 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
     setTrailerKey(undefined);
     setRuntime(null);
     setCertification(null);
+    setSeasonCount(null);
+    setEpisodeCount(null);
     setPlaying(false);
     setRecs(null);
     api
@@ -70,6 +81,8 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
         setTrailerKey(res.youtubeKey);
         setRuntime(res.runtime);
         setCertification(res.certification);
+        setSeasonCount(res.seasonCount);
+        setEpisodeCount(res.episodeCount);
       })
       .catch(() => {
         if (!cancelled) setTrailerKey(null);
@@ -204,13 +217,22 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                 {title.voteAverage.toFixed(1)}
                 <span className="text-mute">({title.voteCount.toLocaleString()})</span>
               </span>
-              {(runtime !== null || detailsLoading) && (
-                <span
-                  className={`inline-block min-w-[3.5rem] ${runtime === null ? "invisible" : ""}`}
-                >
-                  {runtime !== null ? formatRuntime(runtime) : "1h 30m"}
-                </span>
-              )}
+              {(() => {
+                const isTv = title.mediaType === "tv";
+                const text = isTv
+                  ? formatTvLength(seasonCount, episodeCount)
+                  : runtime !== null
+                    ? formatRuntime(runtime)
+                    : null;
+                if (text === null && !detailsLoading) return null;
+                const placeholder = isTv ? "5 seasons · 50 episodes" : "1h 30m";
+                const minWidth = isTv ? "min-w-[11rem]" : "min-w-[3.5rem]";
+                return (
+                  <span className={`inline-block ${minWidth} ${text === null ? "invisible" : ""}`}>
+                    {text ?? placeholder}
+                  </span>
+                );
+              })()}
               {(certification || detailsLoading) && (
                 <span
                   className={`inline-flex items-center px-1.5 rounded ring-1 ring-white/15 text-[11px] text-ink/80 leading-5 ${
