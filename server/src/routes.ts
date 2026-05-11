@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { db, defaultProfileId, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
-import { fetchRecommendations, fetchTitleDetails, pickBestTrailer } from "./tmdb.js";
+import { fetchRecommendations, fetchTitleDetails, fetchTitleSnapshot, pickBestTrailer, searchMulti } from "./tmdb.js";
 
 export const api = Router();
 
@@ -842,4 +842,343 @@ api.post("/marks/import", (req, res) => {
     }
   ).n;
   res.json({ imported, total });
+});
+
+interface WishlistRow {
+  tmdb_id: number;
+  media_type: "movie" | "tv";
+  title: string;
+  poster_path: string | null;
+  release_year: number | null;
+  overview: string | null;
+  original_language: string | null;
+  added_at: string;
+  current_provider_ids: string | null;
+}
+
+function rowToWishlistDto(r: WishlistRow): {
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  title: string;
+  posterPath: string | null;
+  releaseYear: number | null;
+  overview: string | null;
+  originalLanguage: string | null;
+  addedAt: string;
+  currentProviderIds: number[];
+} {
+  return {
+    tmdbId: r.tmdb_id,
+    mediaType: r.media_type,
+    title: r.title,
+    posterPath: r.poster_path,
+    releaseYear: r.release_year,
+    overview: r.overview,
+    originalLanguage: r.original_language,
+    addedAt: r.added_at,
+    currentProviderIds: parseIntList(r.current_provider_ids),
+  };
+}
+
+api.get("/wishlist", (req, res) => {
+  const rows = db
+    .prepare(
+      `
+      SELECT w.tmdb_id, w.media_type, w.title, w.poster_path, w.release_year,
+             w.overview, w.original_language, w.added_at,
+             (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
+              WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id) AS current_provider_ids
+      FROM wishlist w
+      WHERE w.profile_id = ?
+      ORDER BY w.added_at DESC
+    `,
+    )
+    .all(activeProfileId(req)) as WishlistRow[];
+  res.json({ entries: rows.map(rowToWishlistDto) });
+});
+
+api.post("/wishlist", async (req, res) => {
+  const body = (req.body ?? {}) as { tmdbId?: unknown; mediaType?: unknown };
+  const tmdbId = Number(body.tmdbId);
+  const mediaType = body.mediaType;
+  if (!Number.isFinite(tmdbId) || (mediaType !== "movie" && mediaType !== "tv")) {
+    res.status(400).json({ error: "invalid tmdbId / mediaType" });
+    return;
+  }
+  const profileId = activeProfileId(req);
+
+  const existing = db
+    .prepare("SELECT 1 FROM wishlist WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?")
+    .get(profileId, mediaType, tmdbId);
+  if (existing) {
+    res.status(409).json({ error: "already tracked" });
+    return;
+  }
+
+  // Prefer the local catalog snapshot when the title is already known; fall
+  // back to TMDB for titles outside the catalog (the common case for this
+  // feature).
+  const local = db
+    .prepare(
+      `SELECT title, poster_path, release_year, overview, original_language
+       FROM titles WHERE tmdb_id = ? AND media_type = ?`,
+    )
+    .get(tmdbId, mediaType) as
+    | {
+        title: string;
+        poster_path: string | null;
+        release_year: number | null;
+        overview: string | null;
+        original_language: string | null;
+      }
+    | undefined;
+
+  let snapshot: {
+    title: string;
+    posterPath: string | null;
+    releaseYear: number | null;
+    overview: string | null;
+    originalLanguage: string | null;
+  };
+  if (local) {
+    snapshot = {
+      title: local.title,
+      posterPath: local.poster_path,
+      releaseYear: local.release_year,
+      overview: local.overview,
+      originalLanguage: local.original_language,
+    };
+  } else {
+    try {
+      snapshot = await fetchTitleSnapshot(mediaType, tmdbId);
+    } catch (err) {
+      console.error("wishlist add: TMDB snapshot failed:", err);
+      res.status(502).json({ error: "upstream error" });
+      return;
+    }
+  }
+
+  const currentlyAvailable = db
+    .prepare(
+      "SELECT 1 FROM availability WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
+    )
+    .get(mediaType, tmdbId);
+
+  db.prepare(
+    `
+    INSERT INTO wishlist (profile_id, tmdb_id, media_type, title, poster_path, release_year,
+                          overview, original_language, last_seen_available)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${currentlyAvailable ? "datetime('now')" : "NULL"})
+  `,
+  ).run(
+    profileId,
+    tmdbId,
+    mediaType,
+    snapshot.title,
+    snapshot.posterPath,
+    snapshot.releaseYear,
+    snapshot.overview,
+    snapshot.originalLanguage,
+  );
+
+  const row = db
+    .prepare(
+      `
+      SELECT w.tmdb_id, w.media_type, w.title, w.poster_path, w.release_year,
+             w.overview, w.original_language, w.added_at,
+             (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
+              WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id) AS current_provider_ids
+      FROM wishlist w
+      WHERE w.profile_id = ? AND w.media_type = ? AND w.tmdb_id = ?
+    `,
+    )
+    .get(profileId, mediaType, tmdbId) as WishlistRow;
+  res.status(201).json(rowToWishlistDto(row));
+});
+
+api.delete("/wishlist/:mediaType/:tmdbId", (req, res) => {
+  const { mediaType, tmdbId: idRaw } = req.params;
+  if (mediaType !== "movie" && mediaType !== "tv") {
+    res.status(400).json({ error: "invalid mediaType" });
+    return;
+  }
+  const tmdbId = Number(idRaw);
+  if (!Number.isFinite(tmdbId)) {
+    res.status(400).json({ error: "invalid tmdbId" });
+    return;
+  }
+  db.prepare(
+    "DELETE FROM wishlist WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
+  ).run(activeProfileId(req), mediaType, tmdbId);
+  res.json({ ok: true });
+});
+
+interface NotificationRow {
+  id: number;
+  tmdb_id: number;
+  media_type: "movie" | "tv";
+  provider_ids: string;
+  title_snapshot: string;
+  poster_path: string | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+function rowToNotificationDto(r: NotificationRow): {
+  id: number;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  providerIds: number[];
+  titleSnapshot: string;
+  posterPath: string | null;
+  createdAt: string;
+  readAt: string | null;
+} {
+  return {
+    id: r.id,
+    tmdbId: r.tmdb_id,
+    mediaType: r.media_type,
+    providerIds: parseIntList(r.provider_ids),
+    titleSnapshot: r.title_snapshot,
+    posterPath: r.poster_path,
+    createdAt: r.created_at,
+    readAt: r.read_at,
+  };
+}
+
+api.get("/notifications", (req, res) => {
+  const rows = db
+    .prepare(
+      `
+      SELECT id, tmdb_id, media_type, provider_ids, title_snapshot, poster_path, created_at, read_at
+      FROM notifications
+      WHERE profile_id = ?
+      ORDER BY created_at DESC
+    `,
+    )
+    .all(activeProfileId(req)) as NotificationRow[];
+  res.json({ items: rows.map(rowToNotificationDto) });
+});
+
+api.post("/notifications/read-all", (req, res) => {
+  db.prepare(
+    "UPDATE notifications SET read_at = datetime('now') WHERE profile_id = ? AND read_at IS NULL",
+  ).run(activeProfileId(req));
+  res.json({ ok: true });
+});
+
+api.patch("/notifications/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  const body = (req.body ?? {}) as { read?: unknown };
+  if (body.read === true) {
+    db.prepare(
+      "UPDATE notifications SET read_at = datetime('now') WHERE id = ? AND profile_id = ? AND read_at IS NULL",
+    ).run(id, activeProfileId(req));
+  } else if (body.read === false) {
+    db.prepare(
+      "UPDATE notifications SET read_at = NULL WHERE id = ? AND profile_id = ?",
+    ).run(id, activeProfileId(req));
+  }
+  res.json({ ok: true });
+});
+
+api.delete("/notifications/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  db.prepare("DELETE FROM notifications WHERE id = ? AND profile_id = ?").run(
+    id,
+    activeProfileId(req),
+  );
+  res.json({ ok: true });
+});
+
+api.get("/tmdb-search", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (!q) {
+    res.json({ results: [] });
+    return;
+  }
+  let hits;
+  try {
+    hits = await searchMulti(q);
+  } catch (err) {
+    console.error("tmdb-search failed:", err);
+    res.status(502).json({ error: "upstream error" });
+    return;
+  }
+  if (hits.length === 0) {
+    res.json({ results: [] });
+    return;
+  }
+
+  const profileId = activeProfileId(req);
+
+  // Look up local catalog + wishlist status for all hits in one shot.
+  const inCatalog = new Map<string, number[]>();
+  {
+    const params: Record<string, unknown> = {};
+    const conds = hits.map((h, i) => {
+      params[`mt${i}`] = h.media_type;
+      params[`id${i}`] = h.id;
+      return `(t.media_type = @mt${i} AND t.tmdb_id = @id${i})`;
+    });
+    const rows = db
+      .prepare(
+        `
+        SELECT t.media_type, t.tmdb_id,
+               (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
+                WHERE a.media_type = t.media_type AND a.tmdb_id = t.tmdb_id) AS provider_ids
+        FROM titles t
+        WHERE ${conds.join(" OR ")}
+      `,
+      )
+      .all(params) as { media_type: "movie" | "tv"; tmdb_id: number; provider_ids: string | null }[];
+    for (const row of rows) {
+      inCatalog.set(`${row.media_type}:${row.tmdb_id}`, parseIntList(row.provider_ids));
+    }
+  }
+
+  const tracked = new Set<string>();
+  {
+    const params: Record<string, unknown> = { pid: profileId };
+    const conds = hits.map((h, i) => {
+      params[`mt${i}`] = h.media_type;
+      params[`id${i}`] = h.id;
+      return `(media_type = @mt${i} AND tmdb_id = @id${i})`;
+    });
+    const rows = db
+      .prepare(
+        `SELECT media_type, tmdb_id FROM wishlist WHERE profile_id = @pid AND (${conds.join(" OR ")})`,
+      )
+      .all(params) as { media_type: "movie" | "tv"; tmdb_id: number }[];
+    for (const row of rows) tracked.add(`${row.media_type}:${row.tmdb_id}`);
+  }
+
+  const results = hits.map((h) => {
+    const key = `${h.media_type}:${h.id}`;
+    const catalog = inCatalog.get(key);
+    const title = h.media_type === "movie" ? h.title ?? h.original_title ?? "" : h.name ?? h.original_name ?? "";
+    const date = h.media_type === "movie" ? h.release_date : h.first_air_date;
+    const year = date ? Number(date.slice(0, 4)) : null;
+    return {
+      tmdbId: h.id,
+      mediaType: h.media_type,
+      title,
+      posterPath: h.poster_path,
+      releaseYear: Number.isFinite(year) && year && year > 1800 ? year : null,
+      overview: h.overview ?? null,
+      inCatalog: catalog !== undefined,
+      currentProviderIds: catalog ?? [],
+      tracked: tracked.has(key),
+    };
+  });
+
+  res.json({ results });
 });

@@ -1,4 +1,14 @@
-import type { Filters, Genre, Provider, Status, Title, TitlesResponse } from "./types";
+import type {
+  Filters,
+  Genre,
+  NotificationEntry,
+  Provider,
+  Status,
+  Title,
+  TitlesResponse,
+  TmdbSearchResult,
+  WishlistEntry,
+} from "./types";
 
 export interface TitlesQueryExtras {
   onlyIds?: string[];
@@ -125,6 +135,32 @@ export const api = {
       }),
     remove: (id: number): Promise<{ ok: true }> =>
       fetchJson(`/api/profiles/${id}`, { method: "DELETE" }),
+  },
+  tmdbSearch: (q: string): Promise<{ results: TmdbSearchResult[] }> =>
+    fetchJson(`/api/tmdb-search?q=${encodeURIComponent(q)}`),
+  wishlist: {
+    list: (): Promise<{ entries: WishlistEntry[] }> => fetchJson("/api/wishlist"),
+    add: (mediaType: "movie" | "tv", tmdbId: number): Promise<WishlistEntry> =>
+      fetchJson("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaType, tmdbId }),
+      }),
+    remove: (mediaType: "movie" | "tv", tmdbId: number): Promise<{ ok: true }> =>
+      fetchJson(`/api/wishlist/${mediaType}/${tmdbId}`, { method: "DELETE" }),
+  },
+  notifications: {
+    list: (): Promise<{ items: NotificationEntry[] }> => fetchJson("/api/notifications"),
+    markRead: (id: number, read: boolean): Promise<{ ok: true }> =>
+      fetchJson(`/api/notifications/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ read }),
+      }),
+    markAllRead: (): Promise<{ ok: true }> =>
+      fetchJson("/api/notifications/read-all", { method: "POST" }),
+    dismiss: (id: number): Promise<{ ok: true }> =>
+      fetchJson(`/api/notifications/${id}`, { method: "DELETE" }),
   },
 };
 

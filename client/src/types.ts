@@ -45,6 +45,41 @@ export interface Status {
 
 export type SortKey = "popularity" | "rating" | "year" | "title" | "random";
 
+export interface WishlistEntry {
+  tmdbId: number;
+  mediaType: MediaType;
+  title: string;
+  posterPath: string | null;
+  releaseYear: number | null;
+  overview: string | null;
+  originalLanguage: string | null;
+  addedAt: string;
+  currentProviderIds: number[];
+}
+
+export interface NotificationEntry {
+  id: number;
+  tmdbId: number;
+  mediaType: MediaType;
+  providerIds: number[];
+  titleSnapshot: string;
+  posterPath: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface TmdbSearchResult {
+  tmdbId: number;
+  mediaType: MediaType;
+  title: string;
+  posterPath: string | null;
+  releaseYear: number | null;
+  overview: string | null;
+  inCatalog: boolean;
+  currentProviderIds: number[];
+  tracked: boolean;
+}
+
 export interface Filters {
   q: string;
   includeOverview: boolean;

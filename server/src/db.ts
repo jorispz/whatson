@@ -94,6 +94,42 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_marks_profile ON marks(profile_id);
+
+  -- Wishlist: titles a profile wants to be notified about when they arrive
+  -- on one of the tracked streamers. last_seen_available is the arming
+  -- mechanism: NULL means "not currently available, will fire on arrival";
+  -- a timestamp means "currently available, no notification pending". The
+  -- sync clears the timestamp when a title leaves all tracked streamers so
+  -- a later re-arrival fires fresh.
+  CREATE TABLE IF NOT EXISTS wishlist (
+    profile_id          INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    tmdb_id             INTEGER NOT NULL,
+    media_type          TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
+    title               TEXT    NOT NULL,
+    poster_path         TEXT,
+    release_year        INTEGER,
+    overview            TEXT,
+    original_language   TEXT,
+    last_seen_available TEXT,
+    added_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (profile_id, media_type, tmdb_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_wishlist_title ON wishlist(media_type, tmdb_id);
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id     INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    tmdb_id        INTEGER NOT NULL,
+    media_type     TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
+    provider_ids   TEXT    NOT NULL,
+    title_snapshot TEXT    NOT NULL,
+    poster_path    TEXT,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    read_at        TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_profile ON notifications(profile_id, read_at, created_at DESC);
 `);
 
 /**

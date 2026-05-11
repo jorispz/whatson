@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Filters, Genre, Provider, SortKey, Status, Title, TitlesResponse } from "./types";
+import type { Filters, Genre, Provider, SortKey, Status, Title, TitlesResponse, TmdbSearchResult } from "./types";
 import { api } from "./api";
 import { FiltersPanel } from "./components/Filters";
 import { TitleCard } from "./components/TitleCard";
 import { TitleModal } from "./components/TitleModal";
+import { TmdbResultCard } from "./components/TmdbResultCard";
+import { NotificationsPanel } from "./components/NotificationsPanel";
 import { exportMarksJson, importMarksMerge, useMarks } from "./marks";
 import { setActiveProfile, useProfileState } from "./profile";
 import { ProfilePicker } from "./components/ProfilePicker";
 import { SettingsModal } from "./components/SettingsModal";
+import { refreshWishlist, useWishlist } from "./wishlist";
+import { refreshNotifications, useNotifications } from "./notifications";
 
 const PAGE_SIZE = 60;
 const SURPRISE_SAMPLE_SIZE = 500;
@@ -59,9 +63,22 @@ export function App(): JSX.Element {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [tmdbExpanded, setTmdbExpanded] = useState(false);
+  const [tmdbResults, setTmdbResults] = useState<TmdbSearchResult[] | null>(null);
+  const [tmdbLoading, setTmdbLoading] = useState(false);
   const reqIdRef = useRef(0);
+  const tmdbReqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
   const profileState = useProfileState();
+  const { entries: wishlistEntries, isTracked, add: addWishlist, remove: removeWishlist } = useWishlist();
+  const {
+    items: notifications,
+    unreadCount,
+    markRead,
+    markAllRead,
+    dismiss: dismissNotification,
+  } = useNotifications();
 
   const watchlistKeys = useMemo(() => {
     const out: string[] = [];
@@ -257,9 +274,11 @@ export function App(): JSX.Element {
         const s = await api.status();
         setStatus(s);
         if (!s.syncing) {
-          // sync finished — refresh the current view
+          // sync finished — refresh the current view and notification state
           const next = await api.titles(filters, PAGE_SIZE, 0);
           setData(next);
+          void refreshNotifications();
+          void refreshWishlist();
         }
       } catch {
         /* ignore */
@@ -267,6 +286,56 @@ export function App(): JSX.Element {
     }, 2000);
     return () => clearInterval(poll);
   }, [status?.syncing, filters]);
+
+  // Collapse and clear the TMDB section when the query empties.
+  useEffect(() => {
+    if (!filters.q.trim()) {
+      setTmdbExpanded(false);
+      setTmdbResults(null);
+    }
+  }, [filters.q]);
+
+  // When the TMDB section is expanded, debounce re-fetch on query changes.
+  useEffect(() => {
+    if (!tmdbExpanded) return;
+    const q = filters.q.trim();
+    if (!q) return;
+    const id = ++tmdbReqIdRef.current;
+    setTmdbLoading(true);
+    const t = setTimeout(() => {
+      api
+        .tmdbSearch(q)
+        .then((res) => {
+          if (tmdbReqIdRef.current === id) setTmdbResults(res.results);
+        })
+        .catch((err) => {
+          console.error("tmdb search failed:", err);
+          if (tmdbReqIdRef.current === id) setTmdbResults([]);
+        })
+        .finally(() => {
+          if (tmdbReqIdRef.current === id) setTmdbLoading(false);
+        });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [tmdbExpanded, filters.q]);
+
+  const runTmdbSearch = useCallback(() => {
+    if (!filters.q.trim()) return;
+    setTmdbExpanded(true);
+  }, [filters.q]);
+
+  // Reflect new tracked/untracked state into the visible TMDB result list
+  // without re-querying TMDB, so the button flips immediately.
+  useEffect(() => {
+    if (tmdbResults === null) return;
+    setTmdbResults((prev) =>
+      prev === null
+        ? prev
+        : prev.map((r) => ({ ...r, tracked: isTracked(r.mediaType, r.tmdbId) })),
+    );
+    // wishlistEntries is the truth source for isTracked; updating when it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wishlistEntries]);
 
   const updateFilters = useCallback((patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -330,6 +399,22 @@ export function App(): JSX.Element {
     [],
   );
 
+  // Open a title in the existing TitleModal by tmdbId, looking it up via the
+  // titles endpoint. Used by notifications + the "Open" actions on TMDB
+  // results that are already in the catalog.
+  const openTitleById = useCallback(
+    async (mediaType: "movie" | "tv", tmdbId: number): Promise<void> => {
+      try {
+        const res = await api.titles(DEFAULT_FILTERS, 1, 0, { onlyIds: [`${mediaType}:${tmdbId}`] });
+        const found = res.results[0];
+        if (found) openModal(found);
+      } catch (err) {
+        console.error("openTitleById failed:", err);
+      }
+    },
+    [openModal],
+  );
+
   const isEmpty = !loading && data && visibleResults.length === 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
 
@@ -390,6 +475,10 @@ export function App(): JSX.Element {
                 onSurprise={surpriseMe}
                 canSurprise={!!data && data.results.length > 0}
               />
+              <BellButton
+                unread={unreadCount}
+                onClick={() => setNotificationsOpen((v) => !v)}
+              />
               <button
                 onClick={() => setSettingsOpen(true)}
                 title="Settings"
@@ -447,6 +536,7 @@ export function App(): JSX.Element {
             >
               🎲 Surprise me
             </button>
+            <BellButton unread={unreadCount} onClick={() => setNotificationsOpen((v) => !v)} />
             <button
               onClick={() => setSettingsOpen(true)}
               title="Settings"
@@ -534,6 +624,51 @@ export function App(): JSX.Element {
                   </button>
                 </div>
               )}
+
+              {filters.q.trim() && !tmdbExpanded && (
+                <div className="flex justify-center mt-6">
+                  <button
+                    onClick={runTmdbSearch}
+                    className="rounded px-4 py-2 bg-panel ring-1 ring-white/10 hover:ring-accent text-sm"
+                    title="Search TMDB for titles outside your streamers, and track them to be notified when they arrive"
+                  >
+                    Find “{filters.q.trim()}” on TMDB
+                  </button>
+                </div>
+              )}
+
+              {tmdbExpanded && (
+                <div className="mt-8">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <h2 className="text-sm font-medium text-mute">More on TMDB</h2>
+                    {tmdbLoading && <span className="text-xs text-mute">Searching…</span>}
+                  </div>
+                  {tmdbResults && tmdbResults.length === 0 && !tmdbLoading && (
+                    <div className="rounded-lg bg-panel p-6 text-center text-mute text-sm">
+                      No matches on TMDB for “{filters.q.trim()}”.
+                    </div>
+                  )}
+                  {tmdbResults && tmdbResults.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+                      {tmdbResults.map((r) => (
+                        <TmdbResultCard
+                          key={`${r.mediaType}-${r.tmdbId}`}
+                          result={r}
+                          providers={providers}
+                          tracked={r.tracked || isTracked(r.mediaType, r.tmdbId)}
+                          onTrack={async () => {
+                            await addWishlist(r.mediaType, r.tmdbId);
+                          }}
+                          onUntrack={async () => {
+                            await removeWishlist(r.mediaType, r.tmdbId);
+                          }}
+                          onOpenInCatalog={(mt, id) => void openTitleById(mt, id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
           <footer className="mt-8 text-xs text-mute flex items-center justify-center gap-2 flex-wrap">
@@ -572,6 +707,20 @@ export function App(): JSX.Element {
           status={status}
           onSync={onSync}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {notificationsOpen && (
+        <NotificationsPanel
+          items={notifications}
+          entries={wishlistEntries}
+          providers={providers}
+          onClose={() => setNotificationsOpen(false)}
+          onMarkRead={(id) => void markRead(id)}
+          onMarkAllRead={() => void markAllRead()}
+          onDismiss={(id) => void dismissNotification(id)}
+          onUntrack={(mt, id) => void removeWishlist(mt, id)}
+          onOpenTitle={(mt, id) => void openTitleById(mt, id)}
         />
       )}
     </div>
@@ -697,6 +846,40 @@ function countActive(f: Filters): number {
   if (f.yearFrom !== null) n++;
   if (f.yearTo !== null) n++;
   return n;
+}
+
+function BellButton({ unread, onClick }: { unread: number; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title={unread > 0 ? `${unread} new arrival${unread === 1 ? "" : "s"}` : "Notifications"}
+      aria-label="Notifications"
+      className="relative rounded-full p-1.5 text-mute hover:text-ink hover:bg-white/5"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="w-5 h-5"
+        aria-hidden="true"
+      >
+        <path d="M18 16v-5a6 6 0 0 0-12 0v5l-2 2h16z" />
+        <path d="M10 20a2 2 0 0 0 4 0" />
+      </svg>
+      {unread > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-accent text-bg text-[10px] font-semibold leading-[16px] text-center">
+          {unread > 9 ? "9+" : unread}
+        </span>
+      )}
+    </button>
+  );
 }
 
 function SettingsIcon(): JSX.Element {

@@ -195,6 +195,70 @@ export function pickBestTrailer(videos: TmdbVideo[]): TmdbVideo | null {
   return sorted[0] ?? null;
 }
 
+export interface TmdbMultiResult {
+  id: number;
+  media_type: "movie" | "tv" | "person";
+  title?: string;
+  name?: string;
+  original_title?: string;
+  original_name?: string;
+  overview?: string;
+  release_date?: string;
+  first_air_date?: string;
+  poster_path: string | null;
+  original_language?: string;
+  vote_average?: number;
+  popularity?: number;
+}
+
+export type TmdbSearchHit = TmdbMultiResult & { media_type: "movie" | "tv" };
+
+export async function searchMulti(query: string): Promise<TmdbSearchHit[]> {
+  if (!query.trim()) return [];
+  const res = await tmdb<{ results: TmdbMultiResult[] }>("/search/multi", {
+    language: config.language,
+    query,
+    include_adult: "false",
+    page: 1,
+  });
+  return res.results.filter((r): r is TmdbSearchHit => r.media_type === "movie" || r.media_type === "tv");
+}
+
+export interface TmdbTitleSnapshot {
+  title: string;
+  posterPath: string | null;
+  releaseYear: number | null;
+  overview: string | null;
+  originalLanguage: string | null;
+}
+
+/**
+ * Fetch just enough title metadata to snapshot a wishlist entry that's not
+ * yet in the local catalog. Uses the same /movie/:id or /tv/:id endpoint as
+ * fetchTitleDetails but without the videos / certification append.
+ */
+export async function fetchTitleSnapshot(mediaType: MediaType, id: number): Promise<TmdbTitleSnapshot> {
+  const res = await tmdb<{
+    title?: string;
+    name?: string;
+    poster_path: string | null;
+    release_date?: string;
+    first_air_date?: string;
+    overview?: string;
+    original_language?: string;
+  }>(`/${mediaType}/${id}`, { language: config.language });
+  const title = mediaType === "movie" ? res.title ?? "" : res.name ?? "";
+  const date = mediaType === "movie" ? res.release_date : res.first_air_date;
+  const year = date ? Number(date.slice(0, 4)) : null;
+  return {
+    title,
+    posterPath: res.poster_path,
+    releaseYear: Number.isFinite(year) && year && year > 1800 ? year : null,
+    overview: res.overview ?? null,
+    originalLanguage: res.original_language ?? null,
+  };
+}
+
 export type Monetization = "flatrate" | "rent" | "buy" | "free" | "ads";
 
 /**

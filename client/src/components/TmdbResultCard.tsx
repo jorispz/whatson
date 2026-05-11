@@ -1,0 +1,107 @@
+import { useState } from "react";
+import type { Provider, TmdbSearchResult } from "../types";
+import { posterUrl } from "../api";
+
+interface Props {
+  result: TmdbSearchResult;
+  providers: Provider[];
+  tracked: boolean;
+  onTrack: () => Promise<void>;
+  onUntrack: () => Promise<void>;
+  onOpenInCatalog: (mediaType: "movie" | "tv", tmdbId: number) => void;
+}
+
+export function TmdbResultCard({ result, providers, tracked, onTrack, onUntrack, onOpenInCatalog }: Props): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const poster = posterUrl(result.posterPath);
+  const services = result.currentProviderIds
+    .map((id) => providers.find((p) => p.id === id))
+    .filter((p): p is Provider => p !== undefined);
+
+  const handleTrack = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onTrack();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUntrack = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onUntrack();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{ contentVisibility: "auto", containIntrinsicSize: "420px" }}
+      className="flex flex-col rounded-lg overflow-hidden bg-panel ring-1 ring-white/5"
+    >
+      <div className="aspect-[2/3] w-full bg-panel2 relative">
+        {poster ? (
+          <img src={poster} alt={result.title} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+        ) : (
+          <div className="flex items-center justify-center h-full text-mute text-sm">No image</div>
+        )}
+      </div>
+      <div className="p-3 flex-1 flex flex-col gap-1">
+        <div className="font-medium text-sm leading-snug line-clamp-2">{result.title}</div>
+        <div className="text-xs text-mute">
+          {result.mediaType === "movie" ? "Movie" : "TV"} · {result.releaseYear ?? "—"}
+        </div>
+        <div className="mt-auto pt-2 flex flex-col gap-2">
+          {result.inCatalog ? (
+            <>
+              <div className="flex items-center gap-1 flex-wrap">
+                {services.map((s) => {
+                  const logo = s.logo_path ? `/providers/${s.key}.jpg` : null;
+                  return (
+                    <span
+                      key={s.id}
+                      title={s.name}
+                      className="inline-flex items-center justify-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10"
+                    >
+                      {logo ? (
+                        <img src={logo} alt={s.name} className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="text-[9px] text-mute">{s.name.slice(0, 2)}</span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => onOpenInCatalog(result.mediaType, result.tmdbId)}
+                className="w-full rounded px-2 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent"
+              >
+                Open
+              </button>
+            </>
+          ) : tracked ? (
+            <button
+              onClick={handleUntrack}
+              disabled={busy}
+              className="w-full rounded px-2 py-1.5 text-xs bg-accent/20 text-accent ring-1 ring-accent/40 hover:bg-accent/30 disabled:opacity-60"
+            >
+              Tracking ✓
+            </button>
+          ) : (
+            <button
+              onClick={handleTrack}
+              disabled={busy}
+              className="w-full rounded px-2 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent disabled:opacity-60"
+            >
+              {busy ? "Tracking…" : "Track"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
