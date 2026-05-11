@@ -38,20 +38,36 @@ export function TmdbResultCard({ result, providers, tracked, onTrack, onUntrack,
     }
   };
 
+  const tmdbUrl = `https://www.themoviedb.org/${result.mediaType}/${result.tmdbId}`;
+
   return (
     <div
       style={{ contentVisibility: "auto", containIntrinsicSize: "420px" }}
       className="flex flex-col rounded-lg overflow-hidden bg-panel ring-1 ring-white/5"
     >
-      <div className="aspect-[2/3] w-full bg-panel2 relative">
+      <a
+        href={tmdbUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="aspect-[2/3] w-full bg-panel2 relative block ring-1 ring-transparent hover:ring-accent/50 transition-colors"
+        title="Open on TMDB"
+      >
         {poster ? (
           <img src={poster} alt={result.title} className="h-full w-full object-cover" loading="lazy" decoding="async" />
         ) : (
           <div className="flex items-center justify-center h-full text-mute text-sm">No image</div>
         )}
-      </div>
+      </a>
       <div className="p-3 flex-1 flex flex-col gap-1">
-        <div className="font-medium text-sm leading-snug line-clamp-2">{result.title}</div>
+        <a
+          href={tmdbUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-sm leading-snug line-clamp-2 hover:text-accent"
+          title="Open on TMDB"
+        >
+          {result.title}
+        </a>
         <div className="text-xs text-mute">
           {result.mediaType === "movie" ? "Movie" : "TV"} · {result.releaseYear ?? "—"}
         </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import type { NotificationEntry, Provider, WishlistEntry } from "../types";
 import { posterUrl } from "../api";
 
@@ -56,10 +57,10 @@ export function NotificationsPanel({
     onOpenTitle(entry.mediaType, entry.tmdbId);
   };
 
-  return (
+  return createPortal(
     <div
       ref={ref}
-      className="fixed inset-x-2 top-[60px] z-40 mx-auto max-w-md rounded-lg bg-panel ring-1 ring-white/10 shadow-xl overflow-hidden flex flex-col max-h-[80vh] sm:absolute sm:inset-auto sm:right-4 sm:top-[52px] sm:w-96"
+      className="fixed inset-x-2 top-[60px] z-40 mx-auto max-w-md rounded-lg bg-panel ring-1 ring-white/10 shadow-xl overflow-hidden flex flex-col max-h-[80vh] sm:inset-auto sm:right-4 sm:top-[52px] sm:w-96"
     >
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-2 flex items-center justify-between border-b border-white/5">
@@ -131,13 +132,28 @@ export function NotificationsPanel({
             {entries.map((e) => {
               const poster = posterUrl(e.posterPath, "w185");
               const isAvailable = e.currentProviderIds.length > 0;
+              const tmdbUrl = `https://www.themoviedb.org/${e.mediaType}/${e.tmdbId}`;
               return (
                 <li key={`${e.mediaType}-${e.tmdbId}`} className="flex gap-3 px-4 py-2 border-b border-white/5 last:border-b-0">
-                  <div className="h-14 w-10 shrink-0 rounded overflow-hidden bg-panel2">
+                  <a
+                    href={tmdbUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open on TMDB"
+                    className="h-14 w-10 shrink-0 rounded overflow-hidden bg-panel2 ring-1 ring-transparent hover:ring-accent/50"
+                  >
                     {poster && <img src={poster} alt="" className="h-full w-full object-cover" loading="lazy" />}
-                  </div>
+                  </a>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium leading-snug">{e.title}</div>
+                    <a
+                      href={tmdbUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open on TMDB"
+                      className="text-sm font-medium leading-snug hover:text-accent"
+                    >
+                      {e.title}
+                    </a>
                     <div className="text-xs text-mute">
                       {e.mediaType === "movie" ? "Movie" : "TV"} · {e.releaseYear ?? "—"}
                     </div>
@@ -164,7 +180,8 @@ export function NotificationsPanel({
           </ul>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
