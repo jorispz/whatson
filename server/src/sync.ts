@@ -98,7 +98,7 @@ const insertAvailability = db.prepare(
 // Persist a title (and its genres) into the local catalog. When providerId is
 // null the title row goes in without an availability row — used to back
 // watchlist entries that aren't on any tracked streamer.
-function persistTitle(
+export function persistTitle(
   item: TmdbDiscoverResult,
   mediaType: MediaType,
   providerId: number | null = null,

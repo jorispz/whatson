@@ -224,41 +224,6 @@ export async function searchMulti(query: string): Promise<TmdbSearchHit[]> {
   return res.results.filter((r): r is TmdbSearchHit => r.media_type === "movie" || r.media_type === "tv");
 }
 
-export interface TmdbTitleSnapshot {
-  title: string;
-  posterPath: string | null;
-  releaseYear: number | null;
-  overview: string | null;
-  originalLanguage: string | null;
-}
-
-/**
- * Fetch just enough title metadata to snapshot a wishlist entry that's not
- * yet in the local catalog. Uses the same /movie/:id or /tv/:id endpoint as
- * fetchTitleDetails but without the videos / certification append.
- */
-export async function fetchTitleSnapshot(mediaType: MediaType, id: number): Promise<TmdbTitleSnapshot> {
-  const res = await tmdb<{
-    title?: string;
-    name?: string;
-    poster_path: string | null;
-    release_date?: string;
-    first_air_date?: string;
-    overview?: string;
-    original_language?: string;
-  }>(`/${mediaType}/${id}`, { language: config.language });
-  const title = mediaType === "movie" ? res.title ?? "" : res.name ?? "";
-  const date = mediaType === "movie" ? res.release_date : res.first_air_date;
-  const year = date ? Number(date.slice(0, 4)) : null;
-  return {
-    title,
-    posterPath: res.poster_path,
-    releaseYear: Number.isFinite(year) && year && year > 1800 ? year : null,
-    overview: res.overview ?? null,
-    originalLanguage: res.original_language ?? null,
-  };
-}
-
 /**
  * Fetch the full metadata for a single title — same fields we get from the
  * discover walk so the result can flow through persistTitle untouched. The

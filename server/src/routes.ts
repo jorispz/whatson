@@ -1,10 +1,10 @@
 import { Router, type Request } from "express";
 import { db, defaultProfileId, getMeta } from "./db.js";
-import { isSyncing, triggerSync } from "./sync.js";
+import { isSyncing, persistTitle, triggerSync } from "./sync.js";
 import {
   fetchRecommendations,
   fetchTitleDetails,
-  fetchTitleSnapshot,
+  fetchTitleFull,
   pickBestTrailer,
   searchMulti,
 } from "./tmdb.js";
@@ -866,28 +866,28 @@ api.put("/marks/:mediaType/:tmdbId", async (req, res) => {
       "DELETE FROM marks WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
     ).run(profileId, mediaType, tmdbId);
   } else {
-    let snapshot = db
-      .prepare(
-        "SELECT title, poster_path, release_year FROM titles WHERE tmdb_id = ? AND media_type = ?",
-      )
-      .get(tmdbId, mediaType) as
+    const snapshotStmt = db.prepare(
+      "SELECT title, poster_path, release_year FROM titles WHERE tmdb_id = ? AND media_type = ?",
+    );
+    let snapshot = snapshotStmt.get(tmdbId, mediaType) as
       | { title: string; poster_path: string | null; release_year: number | null }
       | undefined;
     // Title isn't in our catalog (e.g. added from a TMDB-only search hit
-    // because it's not on any tracked streamer). Pull the snapshot from
-    // TMDB so the watchlist entry has something to render. If TMDB is
-    // unreachable, fall through with NULL snapshot rather than failing
-    // the mark — the user can re-add later to populate it.
+    // because it's not on any tracked streamer). Fetch the full metadata
+    // from TMDB and persist it to `titles` right now — no availability row —
+    // so the watchlist entry has backdrop / rating / genres / etc.
+    // immediately, not just on the next sync. If TMDB is unreachable, fall
+    // through with NULL snapshot rather than failing the mark; the user can
+    // re-add later (or wait for sync) to populate it.
     if (!snapshot && watchlist) {
       try {
-        const tmdb = await fetchTitleSnapshot(mediaType, tmdbId);
-        snapshot = {
-          title: tmdb.title,
-          poster_path: tmdb.posterPath,
-          release_year: tmdb.releaseYear,
-        };
+        const full = await fetchTitleFull(mediaType, tmdbId);
+        persistTitle(full, mediaType);
+        snapshot = snapshotStmt.get(tmdbId, mediaType) as
+          | { title: string; poster_path: string | null; release_year: number | null }
+          | undefined;
       } catch (err) {
-        console.error("marks put: TMDB snapshot failed:", err);
+        console.error("marks put: TMDB fetch failed:", err);
       }
     }
     const currentlyAvailable = db
