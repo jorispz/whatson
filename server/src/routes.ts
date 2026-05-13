@@ -1,7 +1,13 @@
 import { Router, type Request } from "express";
 import { db, defaultProfileId, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
-import { fetchRecommendations, fetchTitleDetails, pickBestTrailer, searchMulti } from "./tmdb.js";
+import {
+  fetchRecommendations,
+  fetchTitleDetails,
+  fetchTitleSnapshot,
+  pickBestTrailer,
+  searchMulti,
+} from "./tmdb.js";
 
 export const api = Router();
 
@@ -821,7 +827,7 @@ api.get("/marks", (req, res) => {
   res.json(rowsToMarksObject(rows));
 });
 
-api.put("/marks/:mediaType/:tmdbId", (req, res) => {
+api.put("/marks/:mediaType/:tmdbId", async (req, res) => {
   const { mediaType, tmdbId: idRaw } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -841,13 +847,30 @@ api.put("/marks/:mediaType/:tmdbId", (req, res) => {
       "DELETE FROM marks WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
     ).run(profileId, mediaType, tmdbId);
   } else {
-    const snapshot = db
+    let snapshot = db
       .prepare(
         "SELECT title, poster_path, release_year FROM titles WHERE tmdb_id = ? AND media_type = ?",
       )
       .get(tmdbId, mediaType) as
       | { title: string; poster_path: string | null; release_year: number | null }
       | undefined;
+    // Title isn't in our catalog (e.g. added from a TMDB-only search hit
+    // because it's not on any tracked streamer). Pull the snapshot from
+    // TMDB so the watchlist entry has something to render. If TMDB is
+    // unreachable, fall through with NULL snapshot rather than failing
+    // the mark — the user can re-add later to populate it.
+    if (!snapshot && watchlist) {
+      try {
+        const tmdb = await fetchTitleSnapshot(mediaType, tmdbId);
+        snapshot = {
+          title: tmdb.title,
+          poster_path: tmdb.posterPath,
+          release_year: tmdb.releaseYear,
+        };
+      } catch (err) {
+        console.error("marks put: TMDB snapshot failed:", err);
+      }
+    }
     const currentlyAvailable = db
       .prepare("SELECT 1 FROM availability WHERE tmdb_id = ? AND media_type = ? LIMIT 1")
       .get(tmdbId, mediaType);
