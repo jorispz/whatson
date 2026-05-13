@@ -11,7 +11,7 @@ import { exportMarksJson, importMarksMerge, useMarks } from "./marks";
 import { setActiveProfile, useProfileState } from "./profile";
 import { ProfilePicker } from "./components/ProfilePicker";
 import { SettingsModal } from "./components/SettingsModal";
-import { refreshWatchlist, useWatchlist } from "./watchlist";
+import { refreshWatchlist, setWatchlistSort, useWatchlist } from "./watchlist";
 import { refreshNotifications, useNotifications } from "./notifications";
 
 const PAGE_SIZE = 60;
@@ -239,7 +239,7 @@ export function App(): JSX.Element {
       // (titles that left every tracked streamer but the user still has on
       // their watchlist), rendered from snapshot data with isAvailable=false.
       const fetcher = filters.watchlistOnly
-        ? api.watchlist().then(({ entries }) => ({
+        ? api.watchlist(filters.sort, filters.randomSeed).then(({ entries }) => ({
             total: entries.length,
             limit: entries.length,
             offset: 0,
@@ -295,7 +295,7 @@ export function App(): JSX.Element {
         if (!s.syncing) {
           // sync finished — refresh the current view and notification state
           const next = filters.watchlistOnly
-            ? await api.watchlist().then(({ entries }) => ({
+            ? await api.watchlist(filters.sort, filters.randomSeed).then(({ entries }) => ({
                 total: entries.length,
                 limit: entries.length,
                 offset: 0,
@@ -418,13 +418,27 @@ export function App(): JSX.Element {
   }, []);
 
   // Switching between Results and Watchlist mode resets the filter sidebar —
-  // filters carry over poorly between the two contexts.
+  // filters carry over poorly between the two contexts. Sort + randomSeed
+  // do carry over, so the watchlist follows the sort selector in the top
+  // bar without an extra "watchlist sort" control.
   const setMode = useCallback(
     (watchlistOnly: boolean) => {
-      setFilters({ ...DEFAULT_FILTERS, randomSeed: dateSeed(), watchlistOnly });
+      setFilters((prev) => ({
+        ...DEFAULT_FILTERS,
+        sort: prev.sort,
+        randomSeed: prev.randomSeed,
+        watchlistOnly,
+      }));
     },
     [],
   );
+
+  // Keep the watchlist module's sort in sync with the grid's sort selector,
+  // so background refreshes (after mark toggles, after sync) reuse the user's
+  // current choice and the notifications panel's armed list stays consistent.
+  useEffect(() => {
+    void setWatchlistSort(filters.sort, filters.randomSeed);
+  }, [filters.sort, filters.randomSeed]);
 
   // Open a title in the existing TitleModal by tmdbId, looking it up via the
   // titles endpoint. Used by notifications + the "Open" actions on TMDB

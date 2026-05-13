@@ -3,6 +3,7 @@ import type {
   Genre,
   NotificationEntry,
   Provider,
+  SortKey,
   Status,
   Title,
   TitlesResponse,
@@ -96,7 +97,11 @@ export const api = {
     id: number,
     providerKey: string,
   ): Promise<{ url: string | null }> => fetchJson(`/api/deeplink/${mediaType}/${id}/${providerKey}`),
-  watchlist: (): Promise<{ entries: Title[] }> => fetchJson("/api/watchlist"),
+  watchlist: (sort: SortKey, randomSeed: number): Promise<{ entries: Title[] }> => {
+    const params = new URLSearchParams({ sort });
+    if (sort === "random") params.set("randomSeed", String(randomSeed));
+    return fetchJson(`/api/watchlist?${params.toString()}`);
+  },
   marks: {
     get: (): Promise<Record<string, { watchlist?: true; seen?: true }>> =>
       fetchJson("/api/marks"),

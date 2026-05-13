@@ -1012,8 +1012,31 @@ interface WatchlistRow {
 // catalog row is gone, so we render from the snapshot columns on marks and
 // flag the entry as unavailable. Returned shape mirrors Title so the same
 // grid renderer can show both live and orphan entries.
+//
+// Accepts the same sort param as /api/titles. Orphan rows have NULL for
+// rating/popularity/etc so they cluster at the bottom of DESC sorts and at
+// the top of title-ascending — same NULLS LAST trick used by /api/titles.
 api.get("/watchlist", (req, res) => {
   const profileId = activeProfileId(req);
+  const sort =
+    typeof req.query.sort === "string" &&
+    ["popularity", "rating", "year", "title", "random"].includes(req.query.sort)
+      ? (req.query.sort as "popularity" | "rating" | "year" | "title" | "random")
+      : "popularity";
+  const randomSeed =
+    sort === "random" && req.query.randomSeed !== undefined ? Number(req.query.randomSeed) || 1 : 1;
+  const orderBy =
+    sort === "rating"
+      ? "vote_average DESC NULLS LAST, vote_count DESC NULLS LAST"
+      : sort === "year"
+        ? "release_year DESC NULLS LAST, popularity DESC NULLS LAST"
+        : sort === "title"
+          ? "title COLLATE NOCASE ASC"
+          : sort === "random"
+            ? "(((m.tmdb_id + @randomSeed) * 2654435761) & 2147483647)"
+            : "popularity DESC NULLS LAST";
+  const params: Record<string, unknown> = { pid: profileId };
+  if (sort === "random") params.randomSeed = randomSeed;
   const rows = db
     .prepare(
       `
@@ -1033,11 +1056,11 @@ api.get("/watchlist", (req, res) => {
       FROM marks m
       LEFT JOIN titles t
         ON t.tmdb_id = m.tmdb_id AND t.media_type = m.media_type
-      WHERE m.profile_id = ? AND m.watchlist = 1
-      ORDER BY m.updated_at DESC
+      WHERE m.profile_id = @pid AND m.watchlist = 1
+      ORDER BY ${orderBy}
     `,
     )
-    .all(profileId) as WatchlistRow[];
+    .all(params) as WatchlistRow[];
 
   const pageKeys = rows.map((r) => ({ mediaType: r.media_type, tmdbId: r.tmdb_id }));
   const providersByKey = fetchListByKeys("availability", "provider_id", pageKeys);
