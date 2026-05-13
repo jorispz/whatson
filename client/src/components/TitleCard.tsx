@@ -18,6 +18,7 @@ function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: P
   const services = title.providerIds
     .map((id) => providers.find((p) => p.id === id))
     .filter((p): p is Provider => p !== undefined);
+  const unavailable = title.isAvailable === false;
 
   return (
     <div
@@ -41,27 +42,35 @@ function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: P
           <img
             src={poster}
             alt={title.title}
-            className="h-full w-full object-cover"
+            className={`h-full w-full object-cover ${unavailable ? "opacity-40 grayscale" : ""}`}
             loading="lazy"
             decoding="async"
           />
         ) : (
           <div className="flex items-center justify-center h-full text-mute text-sm">No image</div>
         )}
-        <div className="absolute top-2 right-2 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium">
-          <span className="text-yellow-400">★</span>
-          <span>{title.voteAverage.toFixed(1)}</span>
-        </div>
+        {unavailable ? (
+          <div className="absolute top-2 right-2 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-mute ring-1 ring-white/10">
+            Unavailable
+          </div>
+        ) : (
+          <div className="absolute top-2 right-2 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium">
+            <span className="text-yellow-400">★</span>
+            <span>{title.voteAverage.toFixed(1)}</span>
+          </div>
+        )}
       </div>
       <div className="p-3 flex-1 flex flex-col gap-1">
         <div className="font-medium text-sm leading-snug line-clamp-2">{title.title}</div>
         <div className="text-xs text-mute">
           {title.mediaType === "movie" ? "Movie" : "TV"} · {title.releaseYear ?? "—"}
         </div>
-        <div className="mt-auto flex items-center gap-1 pt-2 flex-wrap">
-          {services.map((s) => (
-            <ProviderBadge key={s.id} provider={s} title={title} />
-          ))}
+        <div className="mt-auto flex items-center gap-1 pt-2 flex-wrap min-h-[1.5rem]">
+          {unavailable ? (
+            <span className="text-[11px] text-mute">Not on tracked streamers right now</span>
+          ) : (
+            services.map((s) => <ProviderBadge key={s.id} provider={s} title={title} />)
+          )}
         </div>
       </div>
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
 import type { Title } from "./types";
+import { refreshWatchlist } from "./watchlist";
 
 export type Mark = "watchlist" | "seen";
 export interface MarkSet {
@@ -49,6 +50,7 @@ export async function importMarksMerge(
   // Re-read the canonical state from the server so local matches exactly.
   current = await api.marks.get();
   notify();
+  void refreshWatchlist();
   return { imported, total: Object.keys(current).length };
 }
 
@@ -86,6 +88,12 @@ export function useMarks(): {
       .put(t.mediaType, t.tmdbId, {
         watchlist: !!nextEntry.watchlist,
         seen: !!nextEntry.seen,
+      })
+      .then(() => {
+        // Re-fetch the watchlist so the grid + notifications panel reflect
+        // the change. Only matters when the watchlist flag itself flipped;
+        // a seen-only toggle doesn't affect the watchlist set.
+        if (mark === "watchlist") void refreshWatchlist();
       })
       .catch((err) => {
         console.error("mark save failed:", err);

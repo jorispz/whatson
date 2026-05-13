@@ -1,43 +1,25 @@
-import { useState } from "react";
 import type { Provider, TmdbSearchResult } from "../types";
 import { posterUrl } from "../api";
 
 interface Props {
   result: TmdbSearchResult;
   providers: Provider[];
-  tracked: boolean;
-  onTrack: () => Promise<void>;
-  onUntrack: () => Promise<void>;
+  watchlisted: boolean;
+  onToggleWatchlist: () => void;
   onOpenInCatalog: (mediaType: "movie" | "tv", tmdbId: number) => void;
 }
 
-export function TmdbResultCard({ result, providers, tracked, onTrack, onUntrack, onOpenInCatalog }: Props): JSX.Element {
-  const [busy, setBusy] = useState(false);
+export function TmdbResultCard({
+  result,
+  providers,
+  watchlisted,
+  onToggleWatchlist,
+  onOpenInCatalog,
+}: Props): JSX.Element {
   const poster = posterUrl(result.posterPath);
   const services = result.currentProviderIds
     .map((id) => providers.find((p) => p.id === id))
     .filter((p): p is Provider => p !== undefined);
-
-  const handleTrack = async (): Promise<void> => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await onTrack();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleUntrack = async (): Promise<void> => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await onUntrack();
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const tmdbUrl = `https://www.themoviedb.org/${result.mediaType}/${result.tmdbId}`;
 
   return (
@@ -72,50 +54,48 @@ export function TmdbResultCard({ result, providers, tracked, onTrack, onUntrack,
           {result.mediaType === "movie" ? "Movie" : "TV"} · {result.releaseYear ?? "—"}
         </div>
         <div className="mt-auto pt-2 flex flex-col gap-2">
-          {result.inCatalog ? (
-            <>
-              <div className="flex items-center gap-1 flex-wrap">
-                {services.map((s) => {
-                  const logo = s.logo_path ? `/providers/${s.key}.jpg` : null;
-                  return (
-                    <span
-                      key={s.id}
-                      title={s.name}
-                      className="inline-flex items-center justify-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10"
-                    >
-                      {logo ? (
-                        <img src={logo} alt={s.name} className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="text-[9px] text-mute">{s.name.slice(0, 2)}</span>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
+          {result.inCatalog && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {services.map((s) => {
+                const logo = s.logo_path ? `/providers/${s.key}.jpg` : null;
+                return (
+                  <span
+                    key={s.id}
+                    title={s.name}
+                    className="inline-flex items-center justify-center h-6 w-6 rounded overflow-hidden bg-white/5 ring-1 ring-white/10"
+                  >
+                    {logo ? (
+                      <img src={logo} alt={s.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-[9px] text-mute">{s.name.slice(0, 2)}</span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-1">
+            <button
+              onClick={onToggleWatchlist}
+              title={watchlisted ? "Remove from watchlist" : "Add to watchlist"}
+              aria-label={watchlisted ? "Remove from watchlist" : "Add to watchlist"}
+              className={`${result.inCatalog ? "shrink-0" : "flex-1"} rounded px-2 py-1.5 text-xs ring-1 ${
+                watchlisted
+                  ? "bg-accent/20 text-accent ring-accent/40 hover:bg-accent/30"
+                  : "bg-panel2 ring-white/10 hover:ring-accent"
+              }`}
+            >
+              {result.inCatalog ? "🔖" : watchlisted ? "🔖 On watchlist" : "🔖 Add to watchlist"}
+            </button>
+            {result.inCatalog && (
               <button
                 onClick={() => onOpenInCatalog(result.mediaType, result.tmdbId)}
-                className="w-full rounded px-2 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent"
+                className="flex-1 rounded px-2 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent"
               >
                 Open
               </button>
-            </>
-          ) : tracked ? (
-            <button
-              onClick={handleUntrack}
-              disabled={busy}
-              className="w-full rounded px-2 py-1.5 text-xs bg-accent/20 text-accent ring-1 ring-accent/40 hover:bg-accent/30 disabled:opacity-60"
-            >
-              Tracking ✓
-            </button>
-          ) : (
-            <button
-              onClick={handleTrack}
-              disabled={busy}
-              className="w-full rounded px-2 py-1.5 text-xs bg-panel2 ring-1 ring-white/10 hover:ring-accent disabled:opacity-60"
-            >
-              {busy ? "Tracking…" : "Track"}
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

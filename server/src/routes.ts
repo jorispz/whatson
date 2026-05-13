@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { db, defaultProfileId, getMeta } from "./db.js";
 import { isSyncing, triggerSync } from "./sync.js";
-import { fetchRecommendations, fetchTitleDetails, fetchTitleSnapshot, pickBestTrailer, searchMulti } from "./tmdb.js";
+import { fetchRecommendations, fetchTitleDetails, pickBestTrailer, searchMulti } from "./tmdb.js";
 
 export const api = Router();
 
@@ -841,16 +841,46 @@ api.put("/marks/:mediaType/:tmdbId", (req, res) => {
       "DELETE FROM marks WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
     ).run(profileId, mediaType, tmdbId);
   } else {
+    const snapshot = db
+      .prepare(
+        "SELECT title, poster_path, release_year FROM titles WHERE tmdb_id = ? AND media_type = ?",
+      )
+      .get(tmdbId, mediaType) as
+      | { title: string; poster_path: string | null; release_year: number | null }
+      | undefined;
+    const currentlyAvailable = db
+      .prepare("SELECT 1 FROM availability WHERE tmdb_id = ? AND media_type = ? LIMIT 1")
+      .get(tmdbId, mediaType);
+    // last_seen_available semantics:
+    //   timestamp = "we already know this is available, no notification pending"
+    //   NULL      = "armed: fire a notification next time this appears in availability"
+    // For seen-only marks (watchlist=0) the column is irrelevant — keep it NULL.
+    const lastSeenAvailable = watchlist ? (currentlyAvailable ? new Date().toISOString() : null) : null;
     db.prepare(
       `
-      INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at,
+                         title, poster_path, release_year, last_seen_available)
+      VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
       ON CONFLICT(profile_id, media_type, tmdb_id) DO UPDATE SET
         watchlist = excluded.watchlist,
         seen = excluded.seen,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        title        = COALESCE(marks.title,        excluded.title),
+        poster_path  = COALESCE(marks.poster_path,  excluded.poster_path),
+        release_year = COALESCE(marks.release_year, excluded.release_year),
+        last_seen_available = COALESCE(marks.last_seen_available, excluded.last_seen_available)
     `,
-    ).run(profileId, tmdbId, mediaType, watchlist, seen);
+    ).run(
+      profileId,
+      tmdbId,
+      mediaType,
+      watchlist,
+      seen,
+      snapshot?.title ?? null,
+      snapshot?.poster_path ?? null,
+      snapshot?.release_year ?? null,
+      lastSeenAvailable,
+    );
   }
   res.json({ ok: true });
 });
@@ -867,14 +897,25 @@ api.post("/marks/import", (req, res) => {
     return;
   }
   const profileId = activeProfileId(req);
+  const snapshotStmt = db.prepare(
+    "SELECT title, poster_path, release_year FROM titles WHERE tmdb_id = ? AND media_type = ?",
+  );
+  const availabilityStmt = db.prepare(
+    "SELECT 1 FROM availability WHERE tmdb_id = ? AND media_type = ? LIMIT 1",
+  );
   const stmt = db.prepare(
     `
-    INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at,
+                       title, poster_path, release_year, last_seen_available)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
     ON CONFLICT(profile_id, media_type, tmdb_id) DO UPDATE SET
-      watchlist = max(marks.watchlist, excluded.watchlist),
-      seen      = max(marks.seen,      excluded.seen),
-      updated_at = excluded.updated_at
+      watchlist  = max(marks.watchlist, excluded.watchlist),
+      seen       = max(marks.seen,      excluded.seen),
+      updated_at = excluded.updated_at,
+      title        = COALESCE(marks.title,        excluded.title),
+      poster_path  = COALESCE(marks.poster_path,  excluded.poster_path),
+      release_year = COALESCE(marks.release_year, excluded.release_year),
+      last_seen_available = COALESCE(marks.last_seen_available, excluded.last_seen_available)
   `,
   );
   let imported = 0;
@@ -897,7 +938,23 @@ api.post("/marks/import", (req, res) => {
         if (v.seen === true) seen = 1;
       }
       if (!watchlist && !seen) continue;
-      stmt.run(profileId, tmdbId, mt, watchlist, seen);
+      const snapshot = snapshotStmt.get(tmdbId, mt) as
+        | { title: string; poster_path: string | null; release_year: number | null }
+        | undefined;
+      const currentlyAvailable = watchlist ? availabilityStmt.get(tmdbId, mt) : null;
+      const lastSeenAvailable =
+        watchlist && currentlyAvailable ? new Date().toISOString() : null;
+      stmt.run(
+        profileId,
+        tmdbId,
+        mt,
+        watchlist,
+        seen,
+        snapshot?.title ?? null,
+        snapshot?.poster_path ?? null,
+        snapshot?.release_year ?? null,
+        lastSeenAvailable,
+      );
       imported++;
     }
   });
@@ -910,182 +967,82 @@ api.post("/marks/import", (req, res) => {
   res.json({ imported, total });
 });
 
-interface WishlistRow {
+interface WatchlistRow {
   tmdb_id: number;
   media_type: "movie" | "tv";
-  title: string;
+  title: string | null;
   poster_path: string | null;
   release_year: number | null;
   overview: string | null;
+  release_date: string | null;
+  backdrop_path: string | null;
+  vote_average: number | null;
+  vote_count: number | null;
+  popularity: number | null;
   original_language: string | null;
+  in_catalog: number;
   added_at: string;
-  current_provider_ids: string | null;
 }
 
-function rowToWishlistDto(r: WishlistRow): {
-  tmdbId: number;
-  mediaType: "movie" | "tv";
-  title: string;
-  posterPath: string | null;
-  releaseYear: number | null;
-  overview: string | null;
-  originalLanguage: string | null;
-  addedAt: string;
-  currentProviderIds: number[];
-} {
-  return {
-    tmdbId: r.tmdb_id,
-    mediaType: r.media_type,
-    title: r.title,
-    posterPath: r.poster_path,
-    releaseYear: r.release_year,
-    overview: r.overview,
-    originalLanguage: r.original_language,
-    addedAt: r.added_at,
-    currentProviderIds: parseIntList(r.current_provider_ids),
-  };
-}
-
-api.get("/wishlist", (req, res) => {
+// Watchlist entries (marks.watchlist = 1), joined with the catalog where the
+// title is still around. For titles that have left every tracked streamer the
+// catalog row is gone, so we render from the snapshot columns on marks and
+// flag the entry as unavailable. Returned shape mirrors Title so the same
+// grid renderer can show both live and orphan entries.
+api.get("/watchlist", (req, res) => {
+  const profileId = activeProfileId(req);
   const rows = db
     .prepare(
       `
-      SELECT w.tmdb_id, w.media_type, w.title, w.poster_path, w.release_year,
-             w.overview, w.original_language, w.added_at
-      FROM wishlist w
-      WHERE w.profile_id = ?
-      ORDER BY w.added_at DESC
+      SELECT m.tmdb_id, m.media_type,
+             COALESCE(t.title,        m.title)        AS title,
+             COALESCE(t.poster_path,  m.poster_path)  AS poster_path,
+             COALESCE(t.release_year, m.release_year) AS release_year,
+             t.overview          AS overview,
+             t.release_date      AS release_date,
+             t.backdrop_path     AS backdrop_path,
+             t.vote_average      AS vote_average,
+             t.vote_count        AS vote_count,
+             t.popularity        AS popularity,
+             t.original_language AS original_language,
+             CASE WHEN t.tmdb_id IS NOT NULL THEN 1 ELSE 0 END AS in_catalog,
+             m.updated_at AS added_at
+      FROM marks m
+      LEFT JOIN titles t
+        ON t.tmdb_id = m.tmdb_id AND t.media_type = m.media_type
+      WHERE m.profile_id = ? AND m.watchlist = 1
+      ORDER BY m.updated_at DESC
     `,
     )
-    .all(activeProfileId(req)) as Omit<WishlistRow, "current_provider_ids">[];
+    .all(profileId) as WatchlistRow[];
 
-  const providersByKey = fetchListByKeys(
-    "availability",
-    "provider_id",
-    rows.map((r) => ({ mediaType: r.media_type, tmdbId: r.tmdb_id })),
-  );
+  const pageKeys = rows.map((r) => ({ mediaType: r.media_type, tmdbId: r.tmdb_id }));
+  const providersByKey = fetchListByKeys("availability", "provider_id", pageKeys);
+  const genresByKey = fetchListByKeys("title_genres", "genre_id", pageKeys);
 
   const entries = rows.map((r) => {
-    const ids = providersByKey.get(`${r.media_type}:${r.tmdb_id}`) ?? [];
-    return rowToWishlistDto({ ...r, current_provider_ids: ids.length > 0 ? ids.join(",") : null });
-  });
-  res.json({ entries });
-});
-
-api.post("/wishlist", async (req, res) => {
-  const body = (req.body ?? {}) as { tmdbId?: unknown; mediaType?: unknown };
-  const tmdbId = Number(body.tmdbId);
-  const mediaType = body.mediaType;
-  if (!Number.isFinite(tmdbId) || (mediaType !== "movie" && mediaType !== "tv")) {
-    res.status(400).json({ error: "invalid tmdbId / mediaType" });
-    return;
-  }
-  const profileId = activeProfileId(req);
-
-  const existing = db
-    .prepare("SELECT 1 FROM wishlist WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?")
-    .get(profileId, mediaType, tmdbId);
-  if (existing) {
-    res.status(409).json({ error: "already tracked" });
-    return;
-  }
-
-  // Prefer the local catalog snapshot when the title is already known; fall
-  // back to TMDB for titles outside the catalog (the common case for this
-  // feature).
-  const local = db
-    .prepare(
-      `SELECT title, poster_path, release_year, overview, original_language
-       FROM titles WHERE tmdb_id = ? AND media_type = ?`,
-    )
-    .get(tmdbId, mediaType) as
-    | {
-        title: string;
-        poster_path: string | null;
-        release_year: number | null;
-        overview: string | null;
-        original_language: string | null;
-      }
-    | undefined;
-
-  let snapshot: {
-    title: string;
-    posterPath: string | null;
-    releaseYear: number | null;
-    overview: string | null;
-    originalLanguage: string | null;
-  };
-  if (local) {
-    snapshot = {
-      title: local.title,
-      posterPath: local.poster_path,
-      releaseYear: local.release_year,
-      overview: local.overview,
-      originalLanguage: local.original_language,
+    const key = `${r.media_type}:${r.tmdb_id}`;
+    return {
+      tmdbId: r.tmdb_id,
+      mediaType: r.media_type,
+      title: r.title ?? "",
+      overview: r.overview,
+      releaseDate: r.release_date,
+      releaseYear: r.release_year,
+      posterPath: r.poster_path,
+      backdropPath: r.backdrop_path,
+      voteAverage: r.vote_average ?? 0,
+      voteCount: r.vote_count ?? 0,
+      popularity: r.popularity ?? 0,
+      originalLanguage: r.original_language ?? "",
+      genreIds: genresByKey.get(key) ?? [],
+      providerIds: providersByKey.get(key) ?? [],
+      isAvailable: r.in_catalog === 1,
+      addedAt: r.added_at,
     };
-  } else {
-    try {
-      snapshot = await fetchTitleSnapshot(mediaType, tmdbId);
-    } catch (err) {
-      console.error("wishlist add: TMDB snapshot failed:", err);
-      res.status(502).json({ error: "upstream error" });
-      return;
-    }
-  }
+  });
 
-  const currentlyAvailable = db
-    .prepare(
-      "SELECT 1 FROM availability WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
-    )
-    .get(mediaType, tmdbId);
-
-  db.prepare(
-    `
-    INSERT INTO wishlist (profile_id, tmdb_id, media_type, title, poster_path, release_year,
-                          overview, original_language, last_seen_available)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${currentlyAvailable ? "datetime('now')" : "NULL"})
-  `,
-  ).run(
-    profileId,
-    tmdbId,
-    mediaType,
-    snapshot.title,
-    snapshot.posterPath,
-    snapshot.releaseYear,
-    snapshot.overview,
-    snapshot.originalLanguage,
-  );
-
-  const row = db
-    .prepare(
-      `
-      SELECT w.tmdb_id, w.media_type, w.title, w.poster_path, w.release_year,
-             w.overview, w.original_language, w.added_at,
-             (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
-              WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id) AS current_provider_ids
-      FROM wishlist w
-      WHERE w.profile_id = ? AND w.media_type = ? AND w.tmdb_id = ?
-    `,
-    )
-    .get(profileId, mediaType, tmdbId) as WishlistRow;
-  res.status(201).json(rowToWishlistDto(row));
-});
-
-api.delete("/wishlist/:mediaType/:tmdbId", (req, res) => {
-  const { mediaType, tmdbId: idRaw } = req.params;
-  if (mediaType !== "movie" && mediaType !== "tv") {
-    res.status(400).json({ error: "invalid mediaType" });
-    return;
-  }
-  const tmdbId = Number(idRaw);
-  if (!Number.isFinite(tmdbId)) {
-    res.status(400).json({ error: "invalid tmdbId" });
-    return;
-  }
-  db.prepare(
-    "DELETE FROM wishlist WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?",
-  ).run(activeProfileId(req), mediaType, tmdbId);
-  res.json({ ok: true });
+  res.json({ entries });
 });
 
 interface NotificationRow {
@@ -1195,7 +1152,7 @@ api.get("/tmdb-search", async (req, res) => {
 
   const profileId = activeProfileId(req);
 
-  // Look up local catalog + wishlist status for all hits in one shot.
+  // Look up local catalog + watchlist status for all hits in one shot.
   const inCatalog = new Map<string, number[]>();
   {
     const params: Record<string, unknown> = {};
@@ -1220,7 +1177,7 @@ api.get("/tmdb-search", async (req, res) => {
     }
   }
 
-  const tracked = new Set<string>();
+  const watchlisted = new Set<string>();
   {
     const params: Record<string, unknown> = { pid: profileId };
     const conds = hits.map((h, i) => {
@@ -1230,10 +1187,11 @@ api.get("/tmdb-search", async (req, res) => {
     });
     const rows = db
       .prepare(
-        `SELECT media_type, tmdb_id FROM wishlist WHERE profile_id = @pid AND (${conds.join(" OR ")})`,
+        `SELECT media_type, tmdb_id FROM marks
+          WHERE profile_id = @pid AND watchlist = 1 AND (${conds.join(" OR ")})`,
       )
       .all(params) as { media_type: "movie" | "tv"; tmdb_id: number }[];
-    for (const row of rows) tracked.add(`${row.media_type}:${row.tmdb_id}`);
+    for (const row of rows) watchlisted.add(`${row.media_type}:${row.tmdb_id}`);
   }
 
   const results = hits.map((h) => {
@@ -1251,7 +1209,7 @@ api.get("/tmdb-search", async (req, res) => {
       overview: h.overview ?? null,
       inCatalog: catalog !== undefined,
       currentProviderIds: catalog ?? [],
-      tracked: tracked.has(key),
+      watchlisted: watchlisted.has(key),
     };
   });
 

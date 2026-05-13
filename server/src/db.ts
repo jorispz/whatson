@@ -87,39 +87,30 @@ db.exec(`
 
   INSERT OR IGNORE INTO profiles (id, key, name) VALUES (1, 'default', 'Default');
 
+  -- Snapshot columns (title/poster_path/release_year) let us render a
+  -- watchlist entry even after the title has been pruned from the catalog
+  -- because it left all tracked streamers.
+  --
+  -- last_seen_available is the arrival-notification arming mechanism:
+  -- NULL means "not currently available, will fire on next arrival";
+  -- a timestamp means "currently available, no notification pending".
+  -- Sync clears it when a title leaves all tracked streamers so a later
+  -- re-arrival fires fresh.
   CREATE TABLE IF NOT EXISTS marks (
-    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    tmdb_id    INTEGER NOT NULL,
-    media_type TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
-    watchlist  INTEGER NOT NULL DEFAULT 0,
-    seen       INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    profile_id          INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    tmdb_id             INTEGER NOT NULL,
+    media_type          TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
+    watchlist           INTEGER NOT NULL DEFAULT 0,
+    seen                INTEGER NOT NULL DEFAULT 0,
+    updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    title               TEXT,
+    poster_path         TEXT,
+    release_year        INTEGER,
+    last_seen_available TEXT,
     PRIMARY KEY (profile_id, media_type, tmdb_id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_marks_profile ON marks(profile_id);
-
-  -- Wishlist: titles a profile wants to be notified about when they arrive
-  -- on one of the tracked streamers. last_seen_available is the arming
-  -- mechanism: NULL means "not currently available, will fire on arrival";
-  -- a timestamp means "currently available, no notification pending". The
-  -- sync clears the timestamp when a title leaves all tracked streamers so
-  -- a later re-arrival fires fresh.
-  CREATE TABLE IF NOT EXISTS wishlist (
-    profile_id          INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    tmdb_id             INTEGER NOT NULL,
-    media_type          TEXT    NOT NULL CHECK (media_type IN ('movie','tv')),
-    title               TEXT    NOT NULL,
-    poster_path         TEXT,
-    release_year        INTEGER,
-    overview            TEXT,
-    original_language   TEXT,
-    last_seen_available TEXT,
-    added_at            TEXT    NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (profile_id, media_type, tmdb_id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_wishlist_title ON wishlist(media_type, tmdb_id);
 
   CREATE TABLE IF NOT EXISTS notifications (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +150,73 @@ if (!availabilityCols.some((c) => c.name === "monetization")) {
 }
 
 db.exec(`CREATE INDEX IF NOT EXISTS idx_availability_monetization ON availability(monetization)`);
+
+// Migration: add snapshot columns to pre-existing marks tables. Backfill from
+// the current catalog so existing marks can be rendered standalone. Orphan
+// rows whose title is already gone from the catalog stay NULL until the next
+// time the user touches them.
+const marksCols = db.prepare("PRAGMA table_info(marks)").all() as { name: string }[];
+const marksColNames = new Set(marksCols.map((c) => c.name));
+if (!marksColNames.has("title")) db.exec(`ALTER TABLE marks ADD COLUMN title TEXT`);
+if (!marksColNames.has("poster_path")) db.exec(`ALTER TABLE marks ADD COLUMN poster_path TEXT`);
+if (!marksColNames.has("release_year")) db.exec(`ALTER TABLE marks ADD COLUMN release_year INTEGER`);
+db.exec(`
+  UPDATE marks AS m
+  SET title        = COALESCE(m.title, (SELECT t.title FROM titles t
+                                          WHERE t.tmdb_id = m.tmdb_id AND t.media_type = m.media_type)),
+      poster_path  = COALESCE(m.poster_path, (SELECT t.poster_path FROM titles t
+                                          WHERE t.tmdb_id = m.tmdb_id AND t.media_type = m.media_type)),
+      release_year = COALESCE(m.release_year, (SELECT t.release_year FROM titles t
+                                          WHERE t.tmdb_id = m.tmdb_id AND t.media_type = m.media_type))
+  WHERE m.title IS NULL OR m.poster_path IS NULL OR m.release_year IS NULL
+`);
+
+// Migration: fold the wishlist table into marks. last_seen_available was the
+// one column marks didn't have. Existing wishlist rows become watchlist marks
+// (preserving last_seen_available so already-armed entries stay armed). Pre-
+// existing watchlist marks that didn't have a wishlist counterpart get
+// last_seen_available set based on current availability, so the user doesn't
+// get a notification flood for titles they've been watching for years. The
+// wishlist table and its index are dropped once the data is moved.
+if (!marksColNames.has("last_seen_available")) {
+  db.exec(`ALTER TABLE marks ADD COLUMN last_seen_available TEXT`);
+}
+const wishlistExists = db
+  .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wishlist'")
+  .get();
+if (wishlistExists) {
+  db.exec(`
+    INSERT INTO marks (profile_id, tmdb_id, media_type, watchlist, seen, updated_at,
+                       title, poster_path, release_year, last_seen_available)
+    SELECT profile_id, tmdb_id, media_type, 1, 0, COALESCE(added_at, datetime('now')),
+           title, poster_path, release_year, last_seen_available
+    FROM wishlist
+    WHERE true
+    ON CONFLICT(profile_id, media_type, tmdb_id) DO UPDATE SET
+      watchlist           = 1,
+      title               = COALESCE(marks.title,               excluded.title),
+      poster_path         = COALESCE(marks.poster_path,         excluded.poster_path),
+      release_year        = COALESCE(marks.release_year,        excluded.release_year),
+      last_seen_available = COALESCE(marks.last_seen_available, excluded.last_seen_available)
+  `);
+  db.exec(`DROP INDEX IF EXISTS idx_wishlist_title`);
+  db.exec(`DROP TABLE wishlist`);
+}
+// For watchlist marks that still have last_seen_available unset after the
+// merge (i.e. the user had them on marks but never on the legacy wishlist),
+// arm them only if the title isn't currently available — otherwise stamp
+// "seen available now" so the next sync doesn't fire a stale notification.
+db.exec(`
+  UPDATE marks SET last_seen_available = CASE
+    WHEN EXISTS (SELECT 1 FROM availability a
+                 WHERE a.tmdb_id = marks.tmdb_id AND a.media_type = marks.media_type)
+      THEN datetime('now')
+    ELSE NULL
+  END
+  WHERE watchlist = 1 AND last_seen_available IS NULL
+    AND EXISTS (SELECT 1 FROM availability a
+                WHERE a.tmdb_id = marks.tmdb_id AND a.media_type = marks.media_type)
+`);
 
 export function setMeta(key: string, value: string): void {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(

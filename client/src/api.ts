@@ -7,7 +7,6 @@ import type {
   Title,
   TitlesResponse,
   TmdbSearchResult,
-  WishlistEntry,
 } from "./types";
 
 export interface TitlesQueryExtras {
@@ -97,6 +96,7 @@ export const api = {
     id: number,
     providerKey: string,
   ): Promise<{ url: string | null }> => fetchJson(`/api/deeplink/${mediaType}/${id}/${providerKey}`),
+  watchlist: (): Promise<{ entries: Title[] }> => fetchJson("/api/watchlist"),
   marks: {
     get: (): Promise<Record<string, { watchlist?: true; seen?: true }>> =>
       fetchJson("/api/marks"),
@@ -138,17 +138,6 @@ export const api = {
   },
   tmdbSearch: (q: string): Promise<{ results: TmdbSearchResult[] }> =>
     fetchJson(`/api/tmdb-search?q=${encodeURIComponent(q)}`),
-  wishlist: {
-    list: (): Promise<{ entries: WishlistEntry[] }> => fetchJson("/api/wishlist"),
-    add: (mediaType: "movie" | "tv", tmdbId: number): Promise<WishlistEntry> =>
-      fetchJson("/api/wishlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaType, tmdbId }),
-      }),
-    remove: (mediaType: "movie" | "tv", tmdbId: number): Promise<{ ok: true }> =>
-      fetchJson(`/api/wishlist/${mediaType}/${tmdbId}`, { method: "DELETE" }),
-  },
   notifications: {
     list: (): Promise<{ items: NotificationEntry[] }> => fetchJson("/api/notifications"),
     markRead: (id: number, read: boolean): Promise<{ ok: true }> =>

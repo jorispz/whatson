@@ -11,7 +11,7 @@ import { exportMarksJson, importMarksMerge, useMarks } from "./marks";
 import { setActiveProfile, useProfileState } from "./profile";
 import { ProfilePicker } from "./components/ProfilePicker";
 import { SettingsModal } from "./components/SettingsModal";
-import { refreshWishlist, useWishlist } from "./wishlist";
+import { refreshWatchlist, useWatchlist } from "./watchlist";
 import { refreshNotifications, useNotifications } from "./notifications";
 
 const PAGE_SIZE = 60;
@@ -71,7 +71,16 @@ export function App(): JSX.Element {
   const tmdbReqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
   const profileState = useProfileState();
-  const { entries: wishlistEntries, isTracked, add: addWishlist, remove: removeWishlist } = useWishlist();
+  const { entries: watchlistEntries } = useWatchlist();
+  const armedWatchlistEntries = useMemo(
+    () => watchlistEntries.filter((e) => e.isAvailable === false),
+    [watchlistEntries],
+  );
+  const isWatchlisted = useCallback(
+    (mediaType: "movie" | "tv", tmdbId: number): boolean =>
+      !!getMarks({ mediaType, tmdbId })?.watchlist,
+    [getMarks],
+  );
   const {
     items: notifications,
     unreadCount,
@@ -226,8 +235,18 @@ export function App(): JSX.Element {
     }
     setLoading(true);
     const t = setTimeout(() => {
-      api
-        .titles(filters, PAGE_SIZE, 0, queryExtras)
+      // Watchlist mode uses a dedicated endpoint that also returns orphans
+      // (titles that left every tracked streamer but the user still has on
+      // their watchlist), rendered from snapshot data with isAvailable=false.
+      const fetcher = filters.watchlistOnly
+        ? api.watchlist().then(({ entries }) => ({
+            total: entries.length,
+            limit: entries.length,
+            offset: 0,
+            results: entries,
+          }))
+        : api.titles(filters, PAGE_SIZE, 0, queryExtras);
+      fetcher
         .then((res) => {
           if (reqIdRef.current === id) setData(res);
         })
@@ -275,10 +294,17 @@ export function App(): JSX.Element {
         setStatus(s);
         if (!s.syncing) {
           // sync finished — refresh the current view and notification state
-          const next = await api.titles(filters, PAGE_SIZE, 0);
+          const next = filters.watchlistOnly
+            ? await api.watchlist().then(({ entries }) => ({
+                total: entries.length,
+                limit: entries.length,
+                offset: 0,
+                results: entries,
+              }))
+            : await api.titles(filters, PAGE_SIZE, 0);
           setData(next);
           void refreshNotifications();
-          void refreshWishlist();
+          void refreshWatchlist();
         }
       } catch {
         /* ignore */
@@ -324,18 +350,19 @@ export function App(): JSX.Element {
     setTmdbExpanded(true);
   }, [filters.q]);
 
-  // Reflect new tracked/untracked state into the visible TMDB result list
-  // without re-querying TMDB, so the button flips immediately.
+  // Reflect new watchlisted state into the visible TMDB result list without
+  // re-querying TMDB, so the button flips immediately when the user marks
+  // or unmarks a result.
   useEffect(() => {
     if (tmdbResults === null) return;
     setTmdbResults((prev) =>
       prev === null
         ? prev
-        : prev.map((r) => ({ ...r, tracked: isTracked(r.mediaType, r.tmdbId) })),
+        : prev.map((r) => ({ ...r, watchlisted: isWatchlisted(r.mediaType, r.tmdbId) })),
     );
-    // wishlistEntries is the truth source for isTracked; updating when it changes.
+    // `marks` is the truth source for isWatchlisted; updating when it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wishlistEntries]);
+  }, [marks]);
 
   const updateFilters = useCallback((patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -655,13 +682,10 @@ export function App(): JSX.Element {
                           key={`${r.mediaType}-${r.tmdbId}`}
                           result={r}
                           providers={providers}
-                          tracked={r.tracked || isTracked(r.mediaType, r.tmdbId)}
-                          onTrack={async () => {
-                            await addWishlist(r.mediaType, r.tmdbId);
-                          }}
-                          onUntrack={async () => {
-                            await removeWishlist(r.mediaType, r.tmdbId);
-                          }}
+                          watchlisted={r.watchlisted || isWatchlisted(r.mediaType, r.tmdbId)}
+                          onToggleWatchlist={() =>
+                            toggle({ mediaType: r.mediaType, tmdbId: r.tmdbId }, "watchlist")
+                          }
                           onOpenInCatalog={(mt, id) => void openTitleById(mt, id)}
                         />
                       ))}
@@ -713,13 +737,13 @@ export function App(): JSX.Element {
       {notificationsOpen && (
         <NotificationsPanel
           items={notifications}
-          entries={wishlistEntries}
+          armedEntries={armedWatchlistEntries}
           providers={providers}
           onClose={() => setNotificationsOpen(false)}
           onMarkRead={(id) => void markRead(id)}
           onMarkAllRead={() => void markAllRead()}
           onDismiss={(id) => void dismissNotification(id)}
-          onUntrack={(mt, id) => void removeWishlist(mt, id)}
+          onRemoveFromWatchlist={(mt, id) => toggle({ mediaType: mt, tmdbId: id }, "watchlist")}
           onOpenTitle={(mt, id) => void openTitleById(mt, id)}
         />
       )}

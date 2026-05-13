@@ -198,7 +198,7 @@ async function runSync(onProgress?: (p: SyncProgress) => void): Promise<SyncResu
     }
   }
 
-  fireWishlistArrivals();
+  fireWatchlistArrivals();
 
   // Prune titles that no longer have any availability (left all services).
   db.prepare(`
@@ -228,36 +228,40 @@ interface ArrivalRow {
   profile_id: number;
   tmdb_id: number;
   media_type: "movie" | "tv";
-  title: string;
+  title: string | null;
   poster_path: string | null;
   provider_ids: string | null;
 }
 
 /**
- * After the catalog has been rebuilt, fire notifications for wishlist
- * entries whose title is now on a tracked streamer for the first time
- * since they were added (or since they last left). Auto-removes the
- * wishlist row on fire. For rows that did not fire, refreshes the
- * last_seen_available timestamp (still available) or clears it (no
- * longer available, arming a future re-arrival notification).
+ * After the catalog has been rebuilt, fire notifications for watchlist
+ * marks whose title is now on a tracked streamer for the first time since
+ * they were added (or since they last left). The mark row stays — unlike
+ * the legacy wishlist this isn't a one-shot tracker; the user still wants
+ * to watch the title after being notified.
  *
- * Step ordering matters: arrival selection must run before the
- * UPDATE pass, otherwise we'd arm-then-immediately-fire freshly added
- * wishlist entries that are already in the catalog.
+ * For all watchlist marks, refresh last_seen_available: a timestamp if the
+ * title is currently available (so it doesn't fire again on the next sync),
+ * NULL otherwise (armed for the next arrival).
+ *
+ * Step ordering matters: arrival selection must run before the UPDATE pass,
+ * otherwise we'd arm-then-immediately-fire freshly added marks for titles
+ * that are already in the catalog.
  */
-function fireWishlistArrivals(): void {
+function fireWatchlistArrivals(): void {
   const tx = db.transaction(() => {
     const arrivals = db
       .prepare(
         `
-        SELECT w.profile_id, w.media_type, w.tmdb_id, w.title, w.poster_path,
+        SELECT m.profile_id, m.media_type, m.tmdb_id, m.title, m.poster_path,
                (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
-                WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id) AS provider_ids
-        FROM wishlist w
-        WHERE w.last_seen_available IS NULL
+                WHERE a.media_type = m.media_type AND a.tmdb_id = m.tmdb_id) AS provider_ids
+        FROM marks m
+        WHERE m.watchlist = 1
+          AND m.last_seen_available IS NULL
           AND EXISTS (
             SELECT 1 FROM availability a
-            WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id
+            WHERE a.media_type = m.media_type AND a.tmdb_id = m.tmdb_id
           )
       `,
       )
@@ -267,28 +271,32 @@ function fireWishlistArrivals(): void {
       INSERT INTO notifications (profile_id, tmdb_id, media_type, provider_ids, title_snapshot, poster_path)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const deleteWishlist = db.prepare(
-      `DELETE FROM wishlist WHERE profile_id = ? AND media_type = ? AND tmdb_id = ?`,
-    );
     for (const a of arrivals) {
-      insertNotification.run(a.profile_id, a.tmdb_id, a.media_type, a.provider_ids ?? "", a.title, a.poster_path);
-      deleteWishlist.run(a.profile_id, a.media_type, a.tmdb_id);
+      insertNotification.run(
+        a.profile_id,
+        a.tmdb_id,
+        a.media_type,
+        a.provider_ids ?? "",
+        a.title ?? "",
+        a.poster_path,
+      );
     }
 
     db.prepare(
       `
-      UPDATE wishlist SET last_seen_available = CASE
+      UPDATE marks SET last_seen_available = CASE
         WHEN EXISTS (
           SELECT 1 FROM availability a
-          WHERE a.media_type = wishlist.media_type AND a.tmdb_id = wishlist.tmdb_id
+          WHERE a.media_type = marks.media_type AND a.tmdb_id = marks.tmdb_id
         ) THEN datetime('now')
         ELSE NULL
       END
+      WHERE watchlist = 1
     `,
     ).run();
 
     if (arrivals.length > 0) {
-      console.log(`wishlist: fired ${arrivals.length} arrival notification(s)`);
+      console.log(`watchlist: fired ${arrivals.length} arrival notification(s)`);
     }
   });
   tx();

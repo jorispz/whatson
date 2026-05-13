@@ -15,6 +15,11 @@ export interface Title {
   originalLanguage: string;
   genreIds: number[];
   providerIds: number[];
+  // Present on entries returned by /api/watchlist. False when the title has
+  // left every tracked streamer but the user still has it on their watchlist,
+  // so we render it from the snapshot stored in marks. Absent (treated as
+  // available) on entries from the regular /api/titles grid.
+  isAvailable?: boolean;
 }
 
 export interface TitlesResponse {
@@ -45,18 +50,6 @@ export interface Status {
 
 export type SortKey = "popularity" | "rating" | "year" | "title" | "random";
 
-export interface WishlistEntry {
-  tmdbId: number;
-  mediaType: MediaType;
-  title: string;
-  posterPath: string | null;
-  releaseYear: number | null;
-  overview: string | null;
-  originalLanguage: string | null;
-  addedAt: string;
-  currentProviderIds: number[];
-}
-
 export interface NotificationEntry {
   id: number;
   tmdbId: number;
@@ -77,7 +70,7 @@ export interface TmdbSearchResult {
   overview: string | null;
   inCatalog: boolean;
   currentProviderIds: number[];
-  tracked: boolean;
+  watchlisted: boolean;
 }
 
 export interface Filters {

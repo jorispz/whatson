@@ -1,29 +1,32 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import type { NotificationEntry, Provider, WishlistEntry } from "../types";
+import type { NotificationEntry, Provider, Title } from "../types";
 import { posterUrl } from "../api";
 
 interface Props {
   items: NotificationEntry[];
-  entries: WishlistEntry[];
+  // Watchlist entries currently armed for arrival (not on any tracked
+  // streamer right now). Rendered as a "Waiting for arrival" section with
+  // the same unavailable styling as the watchlist grid.
+  armedEntries: Title[];
   providers: Provider[];
   onClose: () => void;
   onMarkRead: (id: number) => void;
   onMarkAllRead: () => void;
   onDismiss: (id: number) => void;
-  onUntrack: (mediaType: "movie" | "tv", tmdbId: number) => void;
+  onRemoveFromWatchlist: (mediaType: "movie" | "tv", tmdbId: number) => void;
   onOpenTitle: (mediaType: "movie" | "tv", tmdbId: number) => void;
 }
 
 export function NotificationsPanel({
   items,
-  entries,
+  armedEntries,
   providers,
   onClose,
   onMarkRead,
   onMarkAllRead,
   onDismiss,
-  onUntrack,
+  onRemoveFromWatchlist,
   onOpenTitle,
 }: Props): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -52,7 +55,7 @@ export function NotificationsPanel({
     onOpenTitle(n.mediaType, n.tmdbId);
   };
 
-  const handleEntryOpen = (entry: WishlistEntry): void => {
+  const handleEntryOpen = (entry: Title): void => {
     onClose();
     onOpenTitle(entry.mediaType, entry.tmdbId);
   };
@@ -120,30 +123,31 @@ export function NotificationsPanel({
         )}
 
         <div className="px-4 py-2 flex items-center justify-between border-y border-white/5 mt-2">
-          <div className="text-sm font-medium">Tracking</div>
-          <div className="text-xs text-mute">{entries.length === 0 ? "—" : `${entries.length} title${entries.length === 1 ? "" : "s"}`}</div>
+          <div className="text-sm font-medium">Waiting for arrival</div>
+          <div className="text-xs text-mute">
+            {armedEntries.length === 0 ? "—" : `${armedEntries.length} title${armedEntries.length === 1 ? "" : "s"}`}
+          </div>
         </div>
-        {entries.length === 0 ? (
+        {armedEntries.length === 0 ? (
           <div className="px-4 py-6 text-sm text-mute">
-            Nothing tracked yet — search a title, then use “Find on TMDB” at the bottom of the results to add one.
+            Nothing waiting — add titles to your watchlist and you’ll get a notification when they appear on a tracked streamer.
           </div>
         ) : (
           <ul>
-            {entries.map((e) => {
+            {armedEntries.map((e) => {
               const poster = posterUrl(e.posterPath, "w185");
-              const isAvailable = e.currentProviderIds.length > 0;
               const tmdbUrl = `https://www.themoviedb.org/${e.mediaType}/${e.tmdbId}`;
               return (
                 <li key={`${e.mediaType}-${e.tmdbId}`} className="flex gap-3 px-4 py-2 border-b border-white/5 last:border-b-0">
-                  <a
-                    href={tmdbUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open on TMDB"
+                  <button
+                    onClick={() => handleEntryOpen(e)}
+                    title="Open"
                     className="h-14 w-10 shrink-0 rounded overflow-hidden bg-panel2 ring-1 ring-transparent hover:ring-accent/50"
                   >
-                    {poster && <img src={poster} alt="" className="h-full w-full object-cover" loading="lazy" />}
-                  </a>
+                    {poster && (
+                      <img src={poster} alt="" className="h-full w-full object-cover opacity-40 grayscale" loading="lazy" />
+                    )}
+                  </button>
                   <div className="flex-1 min-w-0">
                     <a
                       href={tmdbUrl}
@@ -157,19 +161,12 @@ export function NotificationsPanel({
                     <div className="text-xs text-mute">
                       {e.mediaType === "movie" ? "Movie" : "TV"} · {e.releaseYear ?? "—"}
                     </div>
-                    {isAvailable && (
-                      <button
-                        onClick={() => handleEntryOpen(e)}
-                        className="text-xs text-accent hover:underline mt-0.5"
-                      >
-                        Available now — open
-                      </button>
-                    )}
+                    <div className="text-[11px] text-mute mt-0.5">Not on tracked streamers right now</div>
                   </div>
                   <button
-                    onClick={() => onUntrack(e.mediaType, e.tmdbId)}
-                    title="Stop tracking"
-                    aria-label="Stop tracking"
+                    onClick={() => onRemoveFromWatchlist(e.mediaType, e.tmdbId)}
+                    title="Remove from watchlist"
+                    aria-label="Remove from watchlist"
                     className="self-start text-mute hover:text-ink text-sm leading-none px-1"
                   >
                     ✕
