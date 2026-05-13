@@ -54,6 +54,50 @@ function parseCsvInt(s: unknown): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
+// Fetch a list-valued column (e.g. genre_id, provider_id) for a page of
+// (mediaType, tmdbId) pairs in a single batched query per media_type. Returns
+// a map keyed by `${mediaType}:${tmdbId}`. Used instead of correlated
+// per-row GROUP_CONCAT subqueries — same result, dramatically less I/O on
+// a cold cache.
+function fetchListByKeys(
+  table: "title_genres" | "availability",
+  valueColumn: "genre_id" | "provider_id",
+  keys: { mediaType: "movie" | "tv"; tmdbId: number }[],
+): Map<string, number[]> {
+  const result = new Map<string, number[]>();
+  if (keys.length === 0) return result;
+
+  const movieIds: number[] = [];
+  const tvIds: number[] = [];
+  for (const k of keys) {
+    if (k.mediaType === "movie") movieIds.push(k.tmdbId);
+    else tvIds.push(k.tmdbId);
+  }
+
+  const collect = (mediaType: "movie" | "tv", ids: number[]): void => {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT tmdb_id, ${valueColumn} AS value FROM ${table}
+          WHERE media_type = ? AND tmdb_id IN (${placeholders})`,
+      )
+      .all(mediaType, ...ids) as { tmdb_id: number; value: number }[];
+    for (const row of rows) {
+      const mapKey = `${mediaType}:${row.tmdb_id}`;
+      let list = result.get(mapKey);
+      if (!list) {
+        list = [];
+        result.set(mapKey, list);
+      }
+      list.push(row.value);
+    }
+  };
+  collect("movie", movieIds);
+  collect("tv", tvIds);
+  return result;
+}
+
 function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number }[] {
   return parseCsv(s)
     .map((pair) => {
@@ -83,6 +127,23 @@ const DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
 const recsCache = new Map<string, { ids: number[]; expires: number }>();
 const RECS_TTL_MS = 24 * 60 * 60 * 1000;
 const RECS_MAX = 12;
+
+// The titles table only changes inside a sync, so the unfiltered count is
+// invariant between syncs. Cache it and key the cache on last_sync_at to
+// invalidate automatically when a sync finishes.
+let cachedUnfilteredTitlesTotal: number | null = null;
+let cachedUnfilteredTitlesTotalStamp: string | undefined;
+
+function unfilteredTitlesTotal(): number {
+  const stamp = getMeta("last_sync_at");
+  if (cachedUnfilteredTitlesTotal !== null && cachedUnfilteredTitlesTotalStamp === stamp) {
+    return cachedUnfilteredTitlesTotal;
+  }
+  const row = db.prepare("SELECT COUNT(*) AS n FROM titles").get() as { n: number };
+  cachedUnfilteredTitlesTotal = row.n;
+  cachedUnfilteredTitlesTotalStamp = stamp;
+  return row.n;
+}
 
 // Monetization preference when picking a JustWatch clickout URL for a title:
 // subscription-included beats paid options.
@@ -557,9 +618,11 @@ api.get("/titles", (req, res) => {
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS n FROM titles t ${whereSql}`)
-    .get(params) as { n: number };
+  const total =
+    where.length === 0
+      ? unfilteredTitlesTotal()
+      : (db.prepare(`SELECT COUNT(*) AS n FROM titles t ${whereSql}`).get(params) as { n: number })
+          .n;
 
   const rows = db
     .prepare(
@@ -567,38 +630,41 @@ api.get("/titles", (req, res) => {
       SELECT
         t.tmdb_id, t.media_type, t.title, t.overview, t.release_date, t.release_year,
         t.poster_path, t.backdrop_path, t.vote_average, t.vote_count, t.popularity,
-        t.original_language,
-        (SELECT GROUP_CONCAT(genre_id) FROM title_genres tg
-          WHERE tg.tmdb_id = t.tmdb_id AND tg.media_type = t.media_type) AS genre_ids,
-        (SELECT GROUP_CONCAT(provider_id) FROM availability av
-          WHERE av.tmdb_id = t.tmdb_id AND av.media_type = t.media_type) AS provider_ids
+        t.original_language
       FROM titles t
       ${whereSql}
       ORDER BY ${orderBy}
       LIMIT @limit OFFSET @offset
     `,
     )
-    .all({ ...params, limit, offset }) as TitleRow[];
+    .all({ ...params, limit, offset }) as Omit<TitleRow, "genre_ids" | "provider_ids">[];
 
-  const results = rows.map((r) => ({
-    tmdbId: r.tmdb_id,
-    mediaType: r.media_type,
-    title: r.title,
-    overview: r.overview,
-    releaseDate: r.release_date,
-    releaseYear: r.release_year,
-    posterPath: r.poster_path,
-    backdropPath: r.backdrop_path,
-    voteAverage: r.vote_average,
-    voteCount: r.vote_count,
-    popularity: r.popularity,
-    originalLanguage: r.original_language,
-    genreIds: parseIntList(r.genre_ids),
-    providerIds: parseIntList(r.provider_ids),
-  }));
+  const pageKeys = rows.map((r) => ({ mediaType: r.media_type, tmdbId: r.tmdb_id }));
+  const genresByKey = fetchListByKeys("title_genres", "genre_id", pageKeys);
+  const providersByKey = fetchListByKeys("availability", "provider_id", pageKeys);
+
+  const results = rows.map((r) => {
+    const key = `${r.media_type}:${r.tmdb_id}`;
+    return {
+      tmdbId: r.tmdb_id,
+      mediaType: r.media_type,
+      title: r.title,
+      overview: r.overview,
+      releaseDate: r.release_date,
+      releaseYear: r.release_year,
+      posterPath: r.poster_path,
+      backdropPath: r.backdrop_path,
+      voteAverage: r.vote_average,
+      voteCount: r.vote_count,
+      popularity: r.popularity,
+      originalLanguage: r.original_language,
+      genreIds: genresByKey.get(key) ?? [],
+      providerIds: providersByKey.get(key) ?? [],
+    };
+  });
 
   res.json({
-    total: countRow.n,
+    total,
     limit,
     offset,
     results,
@@ -885,16 +951,25 @@ api.get("/wishlist", (req, res) => {
     .prepare(
       `
       SELECT w.tmdb_id, w.media_type, w.title, w.poster_path, w.release_year,
-             w.overview, w.original_language, w.added_at,
-             (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
-              WHERE a.media_type = w.media_type AND a.tmdb_id = w.tmdb_id) AS current_provider_ids
+             w.overview, w.original_language, w.added_at
       FROM wishlist w
       WHERE w.profile_id = ?
       ORDER BY w.added_at DESC
     `,
     )
-    .all(activeProfileId(req)) as WishlistRow[];
-  res.json({ entries: rows.map(rowToWishlistDto) });
+    .all(activeProfileId(req)) as Omit<WishlistRow, "current_provider_ids">[];
+
+  const providersByKey = fetchListByKeys(
+    "availability",
+    "provider_id",
+    rows.map((r) => ({ mediaType: r.media_type, tmdbId: r.tmdb_id })),
+  );
+
+  const entries = rows.map((r) => {
+    const ids = providersByKey.get(`${r.media_type}:${r.tmdb_id}`) ?? [];
+    return rowToWishlistDto({ ...r, current_provider_ids: ids.length > 0 ? ids.join(",") : null });
+  });
+  res.json({ entries });
 });
 
 api.post("/wishlist", async (req, res) => {

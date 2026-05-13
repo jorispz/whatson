@@ -1,4 +1,4 @@
-import { db, setMeta } from "./db.js";
+import { db, setMeta, warmReadCache } from "./db.js";
 import { config } from "./config.js";
 import {
   discoverAllForProvider,
@@ -216,6 +216,10 @@ async function runSync(onProgress?: (p: SyncProgress) => void): Promise<SyncResu
   setMeta("last_sync_at", new Date().toISOString());
   setMeta("last_sync_duration_ms", String(durationMs));
   setMeta("last_sync_titles", String(totalTitles));
+
+  // Sync rewrites availability and a chunk of titles; reload the hot read
+  // pages so the first /api/titles after a sync isn't cold.
+  warmReadCache();
 
   return { providers, totalTitles, totalAvailability, durationMs };
 }

@@ -8,6 +8,10 @@ fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 export const db = new Database(config.dbPath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+// Default ~8 MB is too small on the Pi: the daily sync write-storm evicts the
+// hot read pages, so the first /api/titles after a sync is cold. 64 MB holds
+// the whole hot working set comfortably.
+db.pragma("cache_size = -65536");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS titles (
@@ -167,3 +171,15 @@ export function getMeta(key: string): string | undefined {
   const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
   return row?.value;
 }
+
+// Touches the pages needed for the common /api/titles read path so SQLite's
+// own cache (and the OS page cache) is warm. Cheap (<100ms). Run once at
+// startup and again after each sync — both moments leave the read pages cold.
+export function warmReadCache(): void {
+  db.prepare("SELECT COUNT(*) FROM titles").get();
+  db.prepare("SELECT tmdb_id, media_type FROM titles ORDER BY popularity DESC LIMIT 60").all();
+  db.prepare("SELECT tmdb_id, media_type, genre_id FROM title_genres").all();
+  db.prepare("SELECT tmdb_id, media_type, provider_id FROM availability").all();
+}
+
+warmReadCache();
