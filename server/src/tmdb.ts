@@ -259,6 +259,49 @@ export async function fetchTitleSnapshot(mediaType: MediaType, id: number): Prom
   };
 }
 
+/**
+ * Fetch the full metadata for a single title — same fields we get from the
+ * discover walk so the result can flow through persistTitle untouched. The
+ * single-title TMDB endpoint returns `genres: {id, name}[]` instead of the
+ * discover endpoint's `genre_ids: number[]`, so we map it back here.
+ */
+export async function fetchTitleFull(mediaType: MediaType, id: number): Promise<TmdbDiscoverResult> {
+  const res = await tmdb<{
+    id: number;
+    title?: string;
+    name?: string;
+    original_title?: string;
+    original_name?: string;
+    overview?: string;
+    release_date?: string;
+    first_air_date?: string;
+    poster_path: string | null;
+    backdrop_path: string | null;
+    vote_average?: number;
+    vote_count?: number;
+    popularity?: number;
+    original_language?: string;
+    genres?: { id: number; name: string }[];
+  }>(`/${mediaType}/${id}`, { language: config.language });
+  return {
+    id: res.id,
+    title: res.title,
+    name: res.name,
+    original_title: res.original_title,
+    original_name: res.original_name,
+    overview: res.overview ?? "",
+    release_date: res.release_date,
+    first_air_date: res.first_air_date,
+    poster_path: res.poster_path,
+    backdrop_path: res.backdrop_path,
+    vote_average: res.vote_average ?? 0,
+    vote_count: res.vote_count ?? 0,
+    popularity: res.popularity ?? 0,
+    genre_ids: (res.genres ?? []).map((g) => g.id),
+    original_language: res.original_language ?? "",
+  };
+}
+
 export type Monetization = "flatrate" | "rent" | "buy" | "free" | "ads";
 
 /**

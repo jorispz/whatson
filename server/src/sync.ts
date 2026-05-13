@@ -4,6 +4,7 @@ import {
   discoverAllForProvider,
   fetchGenres,
   fetchProvidersForRegion,
+  fetchTitleFull,
   type MediaType,
   type TmdbDiscoverResult,
   type TmdbProvider,
@@ -94,7 +95,14 @@ const insertAvailability = db.prepare(
   `INSERT OR IGNORE INTO availability (tmdb_id, media_type, provider_id, monetization) VALUES (?, ?, ?, ?)`,
 );
 
-function persistTitle(item: TmdbDiscoverResult, mediaType: MediaType, providerId: number): void {
+// Persist a title (and its genres) into the local catalog. When providerId is
+// null the title row goes in without an availability row — used to back
+// watchlist entries that aren't on any tracked streamer.
+function persistTitle(
+  item: TmdbDiscoverResult,
+  mediaType: MediaType,
+  providerId: number | null = null,
+): void {
   const title = mediaType === "movie" ? item.title ?? item.original_title ?? "" : item.name ?? item.original_name ?? "";
   const originalTitle = mediaType === "movie" ? item.original_title ?? null : item.original_name ?? null;
   const releaseDate = mediaType === "movie" ? item.release_date ?? null : item.first_air_date ?? null;
@@ -120,7 +128,50 @@ function persistTitle(item: TmdbDiscoverResult, mediaType: MediaType, providerId
     insertTitleGenre.run(item.id, mediaType, genreId);
   }
 
-  insertAvailability.run(item.id, mediaType, providerId, "flatrate");
+  if (providerId !== null) {
+    insertAvailability.run(item.id, mediaType, providerId, "flatrate");
+  }
+}
+
+/**
+ * For each watchlist mark whose title isn't on any tracked streamer right
+ * now, fetch the full title metadata from TMDB and persist it (without an
+ * availability row). Keeps popularity / rating / release_year etc. fresh on
+ * watchlist-only entries so the watchlist sorts correctly and any legacy
+ * orphan marks heal naturally on the next sync.
+ *
+ * Runs after the provider refill (so we know which titles still need
+ * fetching) and before fireWatchlistArrivals (so arrival selection reads
+ * fresh catalog rows).
+ */
+async function refreshWatchlistOnlyTitles(): Promise<void> {
+  const rows = db
+    .prepare(
+      `
+      SELECT DISTINCT m.media_type, m.tmdb_id
+      FROM marks m
+      WHERE m.watchlist = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM availability a
+          WHERE a.media_type = m.media_type AND a.tmdb_id = m.tmdb_id
+        )
+    `,
+    )
+    .all() as { media_type: MediaType; tmdb_id: number }[];
+  if (rows.length === 0) return;
+  let ok = 0;
+  let failed = 0;
+  for (const { media_type, tmdb_id } of rows) {
+    try {
+      const full = await fetchTitleFull(media_type, tmdb_id);
+      persistTitle(full, media_type);
+      ok++;
+    } catch (err) {
+      failed++;
+      console.error(`watchlist refresh: ${media_type}/${tmdb_id} failed:`, err);
+    }
+  }
+  console.log(`watchlist refresh: ${ok} ok${failed ? `, ${failed} failed` : ""}`);
 }
 
 async function syncGenres(): Promise<void> {
@@ -198,14 +249,29 @@ async function runSync(onProgress?: (p: SyncProgress) => void): Promise<SyncResu
     }
   }
 
+  // Refresh metadata for every watchlist title that the provider walks didn't
+  // touch — i.e. titles people are tracking that aren't on any tracked
+  // streamer right now. Fetched one-by-one from TMDB so popularity / rating /
+  // genre stays current. Failures are logged and skipped: one missing TMDB
+  // entry shouldn't take down the whole sync.
+  await refreshWatchlistOnlyTitles();
+
   fireWatchlistArrivals();
 
-  // Prune titles that no longer have any availability (left all services).
+  // Prune titles that no longer have any availability AND aren't backed by a
+  // watchlist mark. Watchlist-only titles intentionally live in the catalog
+  // (without availability rows) so the watchlist grid can sort/filter on real
+  // popularity / rating / year data.
   db.prepare(`
     DELETE FROM titles
     WHERE NOT EXISTS (
       SELECT 1 FROM availability a
       WHERE a.tmdb_id = titles.tmdb_id AND a.media_type = titles.media_type
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM marks m
+      WHERE m.watchlist = 1
+        AND m.tmdb_id = titles.tmdb_id AND m.media_type = titles.media_type
     )
   `).run();
 

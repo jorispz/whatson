@@ -145,7 +145,18 @@ function unfilteredTitlesTotal(): number {
   if (cachedUnfilteredTitlesTotal !== null && cachedUnfilteredTitlesTotalStamp === stamp) {
     return cachedUnfilteredTitlesTotal;
   }
-  const row = db.prepare("SELECT COUNT(*) AS n FROM titles").get() as { n: number };
+  // Count only titles that are currently on a tracked streamer. The `titles`
+  // table also holds watchlist-only entries (no availability rows) so a raw
+  // COUNT(*) would over-report the browseable grid.
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM titles t
+       WHERE EXISTS (
+         SELECT 1 FROM availability a
+         WHERE a.tmdb_id = t.tmdb_id AND a.media_type = t.media_type
+       )`,
+    )
+    .get() as { n: number };
   cachedUnfilteredTitlesTotal = row.n;
   cachedUnfilteredTitlesTotalStamp = stamp;
   return row.n;
@@ -622,10 +633,18 @@ api.get("/titles", (req, res) => {
             : "t.popularity DESC";
   if (sort === "random") params.randomSeed = randomSeed;
 
-  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  // The grid only ever browses what's currently on a tracked streamer.
+  // Watchlist-only catalog entries (no availability rows) are excluded
+  // here unconditionally; they only surface via /api/watchlist.
+  const userFilterCount = where.length;
+  where.push(
+    `EXISTS (SELECT 1 FROM availability a
+              WHERE a.tmdb_id = t.tmdb_id AND a.media_type = t.media_type)`,
+  );
+  const whereSql = `WHERE ${where.join(" AND ")}`;
 
   const total =
-    where.length === 0
+    userFilterCount === 0
       ? unfilteredTitlesTotal()
       : (db.prepare(`SELECT COUNT(*) AS n FROM titles t ${whereSql}`).get(params) as { n: number })
           .n;
@@ -1051,7 +1070,10 @@ api.get("/watchlist", (req, res) => {
              t.vote_count        AS vote_count,
              t.popularity        AS popularity,
              t.original_language AS original_language,
-             CASE WHEN t.tmdb_id IS NOT NULL THEN 1 ELSE 0 END AS in_catalog,
+             CASE WHEN EXISTS (
+               SELECT 1 FROM availability a
+               WHERE a.tmdb_id = m.tmdb_id AND a.media_type = m.media_type
+             ) THEN 1 ELSE 0 END AS in_catalog,
              m.updated_at AS added_at
       FROM marks m
       LEFT JOIN titles t
@@ -1207,6 +1229,9 @@ api.get("/tmdb-search", async (req, res) => {
       params[`id${i}`] = h.id;
       return `(t.media_type = @mt${i} AND t.tmdb_id = @id${i})`;
     });
+    // `titles` can also hold watchlist-only rows (no availability). For the
+    // search-result `inCatalog` flag we only care about titles currently on a
+    // tracked streamer, so gate the lookup on EXISTS availability.
     const rows = db
       .prepare(
         `
@@ -1214,7 +1239,11 @@ api.get("/tmdb-search", async (req, res) => {
                (SELECT GROUP_CONCAT(a.provider_id) FROM availability a
                 WHERE a.media_type = t.media_type AND a.tmdb_id = t.tmdb_id) AS provider_ids
         FROM titles t
-        WHERE ${conds.join(" OR ")}
+        WHERE (${conds.join(" OR ")})
+          AND EXISTS (
+            SELECT 1 FROM availability a
+            WHERE a.media_type = t.media_type AND a.tmdb_id = t.tmdb_id
+          )
       `,
       )
       .all(params) as { media_type: "movie" | "tv"; tmdb_id: number; provider_ids: string | null }[];
