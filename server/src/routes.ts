@@ -1,5 +1,7 @@
 import { Router, type Request } from "express";
+import { config } from "./config.js";
 import { db, defaultProfileId, getMeta } from "./db.js";
+import { resolveViaJustWatch } from "./justwatch.js";
 import { isSyncing, persistTitle, triggerSync } from "./sync.js";
 import {
   fetchRecommendations,
@@ -173,19 +175,34 @@ const MONETIZATION_RANK: Record<string, number> = {
 };
 
 interface JustWatchCxData {
-  providerId?: number;
+  provider?: string;
   monetizationType?: string;
+}
+
+interface JustWatchTitleCtx {
+  jwEntityId?: string;
+}
+
+function normalizeProviderName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /**
  * Scan a TMDB watch-page HTML snippet for JustWatch clickout URLs pointing at
- * the requested TMDB provider id. Returns the target URL (decoded from the
- * clickout's `&r=` param) with the highest monetization rank, or null if no
- * match is found. The `&r=` target is often still an affiliate tracker one
- * hop removed from the provider (e.g. `disneyplus.bn5x.net`) — see
- * `resolveRedirects` for the follow-up that finds the true provider URL.
+ * the requested provider. Returns the target URL (decoded from the clickout's
+ * `&r=` param) with the highest monetization rank, or null if no match is
+ * found. The `&r=` target is often still an affiliate tracker one hop removed
+ * from the provider (e.g. `disneyplus.bn5x.net`) — see `resolveRedirects` for
+ * the follow-up that finds the true provider URL.
+ *
+ * Match by provider name, not id: JustWatch's internal providerId (embedded in
+ * the cx blob) does not always equal TMDB's provider_id. Disney+ in NL is 2706
+ * on JustWatch but 337 on TMDB, so id matching silently drops every Disney+
+ * clickout. Names from the two sources are consistent (both are sourced from
+ * JustWatch), so a normalized name compare works for every provider.
  */
-function pickDirectUrl(html: string, providerId: number): string | null {
+function pickDirectUrl(html: string, providerName: string): string | null {
+  const wanted = normalizeProviderName(providerName);
   const re = /href="https:\/\/click\.justwatch\.com\/a\?cx=([^&"]+)&r=([^"&]+)(?:&[^"]*)?"/g;
   let best: { target: string; rank: number } | null = null;
   for (const m of html.matchAll(re)) {
@@ -197,7 +214,7 @@ function pickDirectUrl(html: string, providerId: number): string | null {
         data?: { data?: JustWatchCxData }[];
       };
       const entry = decoded.data?.[0]?.data;
-      if (!entry || entry.providerId !== providerId) continue;
+      if (!entry?.provider || normalizeProviderName(entry.provider) !== wanted) continue;
       const rank = MONETIZATION_RANK[entry.monetizationType ?? ""] ?? 0;
       if (!best || rank > best.rank) {
         best = { target: decodeURIComponent(rRaw), rank };
@@ -207,6 +224,32 @@ function pickDirectUrl(html: string, providerId: number): string | null {
     }
   }
   return best?.target ?? null;
+}
+
+/**
+ * Pull the JustWatch entity id out of any cx blob on the page. Every clickout
+ * carries `{ jwEntityId }` for the title regardless of which provider it
+ * advertises, so finding even one match (e.g. an Apple TV rent offer) gives
+ * us a free node id for the JustWatch GraphQL fallback — no extra search
+ * round-trip needed. Returns null when the page has zero JustWatch clickouts.
+ */
+function pickJwEntityId(html: string): string | null {
+  const re = /href="https:\/\/click\.justwatch\.com\/a\?cx=([^&"]+)/g;
+  for (const m of html.matchAll(re)) {
+    const cxRaw = m[1];
+    if (!cxRaw) continue;
+    try {
+      const decoded = JSON.parse(Buffer.from(cxRaw, "base64").toString("utf8")) as {
+        data?: { data?: JustWatchTitleCtx }[];
+      };
+      for (const entry of decoded.data ?? []) {
+        if (entry?.data?.jwEntityId) return entry.data.jwEntityId;
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return null;
 }
 
 /**
@@ -287,8 +330,8 @@ api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
     return;
   }
   const providerRow = db
-    .prepare("SELECT id FROM providers WHERE key = ?")
-    .get(providerKey) as { id: number } | undefined;
+    .prepare("SELECT name FROM providers WHERE key = ?")
+    .get(providerKey) as { name: string } | undefined;
   if (!providerRow) {
     res.status(400).json({ error: "unknown providerKey" });
     return;
@@ -308,27 +351,45 @@ api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
       return;
     }
     const html = await page.text();
-    const clickoutTarget = pickDirectUrl(html, providerRow.id);
+    const clickoutTarget = pickDirectUrl(html, providerRow.name);
     let url = clickoutTarget ? await resolveRedirects(clickoutTarget) : null;
     const site = PROVIDER_SITES[providerKey];
-    if (site && url && matchesProviderHost(url, site)) {
+    const stripQuery = (raw: string): string => {
       // Strip affiliate tracking query/fragment that rides along on the redirect
       // chain. Disney+ in particular won't deep-link into its app from URLs with
       // a query string — its intent filter does a strict path-pattern match.
       try {
-        const u = new URL(url);
-        url = `${u.protocol}//${u.host}${u.pathname}`;
+        const u = new URL(raw);
+        return `${u.protocol}//${u.host}${u.pathname}`;
       } catch {
-        /* keep url as-is */
+        return raw;
+      }
+    };
+    if (site && url && matchesProviderHost(url, site)) {
+      url = stripQuery(url);
+    }
+    const titleRow = db
+      .prepare("SELECT title FROM titles WHERE tmdb_id = ? AND media_type = ?")
+      .get(id, mediaType) as { title: string } | undefined;
+    if (site && titleRow?.title && (!url || !matchesProviderHost(url, site))) {
+      // TMDB's HTML watch page and TMDB's /watch/providers JSON occasionally
+      // disagree about which providers carry a title (different cache windows
+      // on TMDB's side). Querying JustWatch directly closes the gap when our
+      // HTML-scrape path comes up empty for this provider.
+      const jwUrl = await resolveViaJustWatch({
+        title: titleRow.title,
+        tmdbId: id,
+        mediaType,
+        providerName: providerRow.name,
+        country: config.region,
+        knownNodeId: pickJwEntityId(html),
+      });
+      if (jwUrl && matchesProviderHost(jwUrl, site)) {
+        url = stripQuery(jwUrl);
       }
     }
-    if (site && (!url || !matchesProviderHost(url, site))) {
-      const titleRow = db
-        .prepare("SELECT title FROM titles WHERE tmdb_id = ? AND media_type = ?")
-        .get(id, mediaType) as { title: string } | undefined;
-      if (titleRow?.title) {
-        url = site.search(titleRow.title);
-      }
+    if (site && titleRow?.title && (!url || !matchesProviderHost(url, site))) {
+      url = site.search(titleRow.title);
     }
     res.json({ url });
   } catch (err) {
