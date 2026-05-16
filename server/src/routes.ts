@@ -690,7 +690,7 @@ api.get("/titles", (req, res) => {
         : sort === "title"
           ? "t.title COLLATE NOCASE ASC"
           : sort === "random"
-            ? "(((t.tmdb_id ^ @randomSeed) * 2654435761) & 2147483647)"
+            ? "((((t.tmdb_id | @randomSeed) - (t.tmdb_id & @randomSeed)) * 2654435761) & 2147483647)"
             : "t.popularity DESC";
   if (sort === "random") params.randomSeed = randomSeed;
 
@@ -1113,7 +1113,7 @@ api.get("/watchlist", (req, res) => {
         : sort === "title"
           ? "title COLLATE NOCASE ASC"
           : sort === "random"
-            ? "(((m.tmdb_id ^ @randomSeed) * 2654435761) & 2147483647)"
+            ? "((((m.tmdb_id | @randomSeed) - (m.tmdb_id & @randomSeed)) * 2654435761) & 2147483647)"
             : "popularity DESC NULLS LAST";
   const params: Record<string, unknown> = { pid: profileId };
   if (sort === "random") params.randomSeed = randomSeed;
