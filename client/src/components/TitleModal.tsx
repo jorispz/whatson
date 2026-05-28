@@ -40,12 +40,14 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const [episodeCount, setEpisodeCount] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [recs, setRecs] = useState<Title[] | null>(null);
+  const [isPhoneLandscape, setIsPhoneLandscape] = useState(false);
   // True until the /api/details fetch resolves. Used to reserve layout space
   // for the runtime / certification pills so they don't pop in and grow the
   // meta row.
   const detailsLoading = trailerKey === undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const recsScrollRef = useRef<HTMLDivElement>(null);
+  const trailerWrapRef = useRef<HTMLDivElement>(null);
   const { hasMark, toggle } = useMarks();
   const savedWatchlist = hasMark(title, "watchlist");
   const seen = hasMark(title, "seen");
@@ -64,6 +66,19 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Detect a phone held in landscape. Short height + coarse pointer reliably
+  // separates phones from tablets and desktops without UA sniffing — an iPad
+  // in landscape is ~820px tall, well above the 500px cutoff.
+  useEffect(() => {
+    const mql = window.matchMedia(
+      "(orientation: landscape) and (max-height: 500px) and (pointer: coarse)",
+    );
+    const update = (): void => setIsPhoneLandscape(mql.matches);
+    update();
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +125,30 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const backdrop = title.backdropPath ? `https://image.tmdb.org/t/p/w780${title.backdropPath}` : null;
   const poster = posterUrl(title.posterPath, "w342");
   const hasHeader = backdrop || playing;
+  // When the user rotates a phone to landscape while a trailer is playing we
+  // lift the iframe wrapper into a viewport-filling overlay. On Android Chrome
+  // we additionally request real fullscreen so the address bar hides; iOS
+  // Safari blocks Fullscreen API on iframes and falls back to the CSS overlay.
+  const fullscreen = playing && !!trailerKey && isPhoneLandscape;
+
+  useEffect(() => {
+    const el = trailerWrapRef.current;
+    if (!el) return;
+    if (fullscreen) {
+      el.requestFullscreen?.().catch(() => {});
+    } else if (document.fullscreenElement === el) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }, [fullscreen]);
+
+  // Belt-and-braces: if the modal unmounts (Esc, recommendation click, etc.)
+  // while still in real fullscreen, restore the document.
+  useEffect(
+    () => () => {
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    },
+    [],
+  );
 
   return (
     <div
@@ -123,7 +162,14 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
         onClick={(e) => e.stopPropagation()}
       >
         {hasHeader && (
-          <div className="aspect-video bg-panel2 relative">
+          <div
+            ref={trailerWrapRef}
+            className={
+              fullscreen
+                ? "fixed inset-0 z-[60] bg-black"
+                : "aspect-video bg-panel2 relative"
+            }
+          >
             {playing && trailerKey ? (
               <iframe
                 className="absolute inset-0 h-full w-full"
