@@ -47,7 +47,6 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const detailsLoading = trailerKey === undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const recsScrollRef = useRef<HTMLDivElement>(null);
-  const trailerWrapRef = useRef<HTMLDivElement>(null);
   const { hasMark, toggle } = useMarks();
   const savedWatchlist = hasMark(title, "watchlist");
   const seen = hasMark(title, "seen");
@@ -125,24 +124,17 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   const backdrop = title.backdropPath ? `https://image.tmdb.org/t/p/w780${title.backdropPath}` : null;
   const poster = posterUrl(title.posterPath, "w342");
   const hasHeader = backdrop || playing;
-  // When the user rotates a phone to landscape while a trailer is playing we
-  // lift the iframe wrapper into a viewport-filling overlay. On Android Chrome
-  // we additionally request real fullscreen so the address bar hides; iOS
-  // Safari blocks Fullscreen API on iframes and falls back to the CSS overlay.
+  // On a phone in landscape we lift the iframe wrapper into a viewport-filling
+  // overlay via CSS. The address bar and system-bar hide is handled separately
+  // by requesting real fullscreen on the Play-button user gesture (see below),
+  // and held for the whole trailer session — calling requestFullscreen from a
+  // rotation-driven effect only succeeds while the previous user activation is
+  // still fresh, so after the first rotate-back→rotate cycle Android Chrome
+  // silently rejects and the system bar reappears.
   const fullscreen = playing && !!trailerKey && isPhoneLandscape;
 
-  useEffect(() => {
-    const el = trailerWrapRef.current;
-    if (!el) return;
-    if (fullscreen) {
-      el.requestFullscreen?.().catch(() => {});
-    } else if (document.fullscreenElement === el) {
-      document.exitFullscreen?.().catch(() => {});
-    }
-  }, [fullscreen]);
-
-  // Belt-and-braces: if the modal unmounts (Esc, recommendation click, etc.)
-  // while still in real fullscreen, restore the document.
+  // If the modal unmounts (Esc, recommendation click, backdrop tap) while
+  // still in real fullscreen, restore the document.
   useEffect(
     () => () => {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
@@ -163,7 +155,6 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
       >
         {hasHeader && (
           <div
-            ref={trailerWrapRef}
             className={
               fullscreen
                 ? "fixed inset-0 z-[60] bg-black"
@@ -191,7 +182,19 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                     real key. Fading in via transition feels less abrupt than
                     a sudden mount. */}
                 <button
-                  onClick={() => setPlaying(true)}
+                  onClick={() => {
+                    setPlaying(true);
+                    // Request real fullscreen here, while the user activation
+                    // from this tap is fresh. Doing it from a rotation effect
+                    // works once and then fails silently (the activation has
+                    // expired by the time the user rotates a second time).
+                    // Holding fullscreen for the whole trailer session also
+                    // hides the Android system status bar — the CSS overlay
+                    // alone can't.
+                    if (window.matchMedia("(pointer: coarse)").matches) {
+                      document.documentElement.requestFullscreen?.().catch(() => {});
+                    }
+                  }}
                   disabled={!trailerKey}
                   aria-hidden={!trailerKey}
                   tabIndex={trailerKey ? 0 : -1}
