@@ -67,11 +67,14 @@ export function App(): JSX.Element {
   const [tmdbExpanded, setTmdbExpanded] = useState(false);
   const [tmdbResults, setTmdbResults] = useState<TmdbSearchResult[] | null>(null);
   const [tmdbLoading, setTmdbLoading] = useState(false);
+  // Bumped when the sync poller sees a sync finish, so the current view is
+  // re-queried through the same guarded effect as any filter change.
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const reqIdRef = useRef(0);
   const tmdbReqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
   const profileState = useProfileState();
-  const { entries: watchlistEntries } = useWatchlist();
+  const { entries: watchlistEntries, ready: watchlistReady } = useWatchlist();
   const armedWatchlistEntries = useMemo(
     () => watchlistEntries.filter((e) => e.isAvailable === false),
     [watchlistEntries],
@@ -89,30 +92,10 @@ export function App(): JSX.Element {
     dismiss: dismissNotification,
   } = useNotifications();
 
-  const watchlistKeys = useMemo(() => {
-    const out: string[] = [];
-    for (const [key, set] of Object.entries(marks)) {
-      // Local key format is "movie-123"; server expects "movie:123".
-      if (set.watchlist) out.push(key.replace("-", ":"));
-    }
-    return out;
-  }, [marks]);
-
-  // Serialize so identity is stable when the actual set of watchlist IDs
-  // doesn't change (prevents an unnecessary refetch when marking / unmarking
-  // 'seen' while Watchlist mode is on).
-  const onlyIdsSig = filters.watchlistOnly ? watchlistKeys.join(",") : "";
-  const queryExtras = useMemo(
-    () => ({ onlyIds: onlyIdsSig ? onlyIdsSig.split(",") : undefined }),
-    [onlyIdsSig],
-  );
-
-  const emptyByMarks = filters.watchlistOnly && watchlistKeys.length === 0;
-
   // Fingerprint of the filter fields that actually drive the server query.
   // hideSeen is a pure client-side filter — toggling it shouldn't refetch or
-  // scroll the grid back to the top. Watchlist mode does swap the result set
-  // (via onlyIds) so it stays part of the signature.
+  // scroll the grid back to the top. watchlistOnly stays in the signature so
+  // switching modes re-queries (and scrolls to top) like any other change.
   const queryFilterSig = useMemo(() => {
     const { hideSeen: _hideSeen, ...rest } = filters;
     return JSON.stringify(rest);
@@ -225,28 +208,18 @@ export function App(): JSX.Element {
     window.scrollTo({ top: 0 });
   }, [queryFilterSig]);
 
-  // debounced filter -> query
+  // Debounced filter -> query. In Watchlist mode the grid renders straight
+  // from the watchlist store (see gridData below), so nothing is fetched here.
   useEffect(() => {
     const id = ++reqIdRef.current;
-    if (emptyByMarks) {
-      setData({ total: 0, limit: PAGE_SIZE, offset: 0, results: [] });
+    if (filters.watchlistOnly) {
       setLoading(false);
       return;
     }
     setLoading(true);
     const t = setTimeout(() => {
-      // Watchlist mode uses a dedicated endpoint that also returns orphans
-      // (titles that left every tracked streamer but the user still has on
-      // their watchlist), rendered from snapshot data with isAvailable=false.
-      const fetcher = filters.watchlistOnly
-        ? api.watchlist(filters.sort, filters.randomSeed).then(({ entries }) => ({
-            total: entries.length,
-            limit: entries.length,
-            offset: 0,
-            results: entries,
-          }))
-        : api.titles(filters, PAGE_SIZE, 0, queryExtras);
-      fetcher
+      api
+        .titles(filters, PAGE_SIZE, 0)
         .then((res) => {
           if (reqIdRef.current === id) setData(res);
         })
@@ -262,18 +235,34 @@ export function App(): JSX.Element {
     // so we depend on queryFilterSig instead to avoid a useless refetch when
     // Hide seen is toggled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryFilterSig, queryExtras, emptyByMarks]);
+  }, [queryFilterSig, refreshNonce]);
+
+  // What the grid renders. Watchlist mode is served by the shared watchlist
+  // store, which marks.ts refreshes only after the server has acknowledged a
+  // flag change, so the grid can never show a set the server has moved past.
+  const gridData = useMemo((): TitlesResponse | null => {
+    if (!filters.watchlistOnly) return data;
+    if (!watchlistReady) return null;
+    return { total: watchlistEntries.length, limit: watchlistEntries.length, offset: 0, results: watchlistEntries };
+  }, [filters.watchlistOnly, data, watchlistReady, watchlistEntries]);
+  const gridLoading = filters.watchlistOnly ? !watchlistReady : loading;
 
   const loadMore = useCallback(async (): Promise<void> => {
-    if (!data || data.results.length >= data.total || loadingMore) return;
+    if (filters.watchlistOnly || !data || data.results.length >= data.total || loadingMore) return;
+    // A filter change while this page is in flight bumps reqIdRef; the stale
+    // page must then be dropped rather than appended to the new result set.
+    const id = reqIdRef.current;
     setLoadingMore(true);
     try {
-      const next = await api.titles(filters, PAGE_SIZE, data.results.length, queryExtras);
-      setData({ ...next, results: [...data.results, ...next.results] });
+      const next = await api.titles(filters, PAGE_SIZE, data.results.length);
+      if (reqIdRef.current !== id) return;
+      setData((prev) => (prev ? { ...next, results: [...prev.results, ...next.results] } : next));
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoadingMore(false);
     }
-  }, [data, filters, loadingMore, queryExtras]);
+  }, [data, filters, loadingMore]);
 
   const onSync = useCallback(async (): Promise<void> => {
     setSyncError(null);
@@ -294,15 +283,7 @@ export function App(): JSX.Element {
         setStatus(s);
         if (!s.syncing) {
           // sync finished — refresh the current view and notification state
-          const next = filters.watchlistOnly
-            ? await api.watchlist(filters.sort, filters.randomSeed).then(({ entries }) => ({
-                total: entries.length,
-                limit: entries.length,
-                offset: 0,
-                results: entries,
-              }))
-            : await api.titles(filters, PAGE_SIZE, 0);
-          setData(next);
+          setRefreshNonce((n) => n + 1);
           void refreshNotifications();
           void refreshWatchlist();
         }
@@ -311,7 +292,7 @@ export function App(): JSX.Element {
       }
     }, 2000);
     return () => clearInterval(poll);
-  }, [status?.syncing, filters]);
+  }, [status?.syncing]);
 
   // Collapse and clear the TMDB section when the query empties.
   useEffect(() => {
@@ -373,25 +354,26 @@ export function App(): JSX.Element {
   const activeFilterCount = useMemo(() => countActive(filters), [filters]);
 
   const visibleResults = useMemo(() => {
-    if (!data) return [] as Title[];
-    if (!filters.hideSeen) return data.results;
-    return data.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen);
-  }, [data, filters.hideSeen, marks]);
+    if (!gridData) return [] as Title[];
+    if (!filters.hideSeen) return gridData.results;
+    return gridData.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen);
+  }, [gridData, filters.hideSeen, marks]);
 
   const surpriseMe = useCallback(async (): Promise<void> => {
-    if (emptyByMarks) return;
     try {
-      const sample = await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0, queryExtras);
+      const sample = filters.watchlistOnly
+        ? watchlistEntries
+        : (await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0)).results;
       const pool = filters.hideSeen
-        ? sample.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen)
-        : sample.results;
+        ? sample.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen)
+        : sample;
       if (pool.length === 0) return;
       const pick = pool[Math.floor(Math.random() * pool.length)];
       if (pick) openModal(pick);
     } catch (err) {
       console.error(err);
     }
-  }, [filters, queryExtras, emptyByMarks, marks]);
+  }, [filters, watchlistEntries, marks]);
 
   // Make the TitleModal participate in the browser back stack so the natural
   // mobile back gesture closes the modal instead of leaving the app. One
@@ -456,7 +438,7 @@ export function App(): JSX.Element {
     [openModal],
   );
 
-  const isEmpty = !loading && data && visibleResults.length === 0;
+  const isEmpty = !gridLoading && gridData && visibleResults.length === 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
 
   return (
@@ -494,9 +476,9 @@ export function App(): JSX.Element {
                   Watchlist
                 </button>
               </div>
-              {data && (
+              {gridData && (
                 <span className="hidden sm:inline text-xs text-mute">
-                  {data.total.toLocaleString()} titles
+                  {gridData.total.toLocaleString()} titles
                   {activeFilterCount > 0 && (
                     <span className="hidden md:inline">
                       {" "}· {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
@@ -514,7 +496,7 @@ export function App(): JSX.Element {
                 onReset={resetFilters}
                 activeCount={activeFilterCount}
                 onSurprise={surpriseMe}
-                canSurprise={!!data && data.results.length > 0}
+                canSurprise={!!gridData && gridData.results.length > 0}
               />
               <BellButton
                 unread={unreadCount}
@@ -571,7 +553,7 @@ export function App(): JSX.Element {
             )}
             <button
               onClick={surpriseMe}
-              disabled={!data || data.results.length === 0}
+              disabled={!gridData || gridData.results.length === 0}
               className="rounded px-3 py-1.5 bg-panel2 ring-1 ring-white/10 hover:ring-accent disabled:opacity-40"
               title="Pick something random from these filters"
             >
@@ -633,7 +615,7 @@ export function App(): JSX.Element {
             </div>
           )}
 
-          {data && (
+          {gridData && (
             <>
               {isEmpty && (
                 <div className="rounded-lg bg-panel p-8 text-center text-mute">
@@ -654,14 +636,14 @@ export function App(): JSX.Element {
                 ))}
               </div>
 
-              {data.results.length < data.total && (
+              {gridData.results.length < gridData.total && (
                 <div className="flex justify-center mt-6">
                   <button
                     onClick={loadMore}
                     disabled={loadingMore}
                     className="rounded px-4 py-2 bg-panel ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-60"
                   >
-                    {loadingMore ? "Loading…" : `Load more (${(data.total - data.results.length).toLocaleString()} remaining)`}
+                    {loadingMore ? "Loading…" : `Load more (${(gridData.total - gridData.results.length).toLocaleString()} remaining)`}
                   </button>
                 </div>
               )}

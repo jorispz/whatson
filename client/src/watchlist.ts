@@ -2,38 +2,48 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { SortKey, Title } from "./types";
 
-// Shared watchlist state. Loaded once on app mount and refreshed whenever
-// marks change (via marks.ts) or sync finishes. Used both by the grid's
-// "Watchlist" mode and by the notifications panel's "Waiting for arrival"
-// section — they're the same dataset, filtered differently.
+// Shared watchlist state: the single source for the grid's Watchlist mode and
+// for the notifications panel's "Waiting for arrival" section. Refreshed by
+// marks.ts after a watchlist flag flips and by App after a sync finishes.
 //
-// The current sort key (and randomSeed for random) is kept module-local so
-// background refreshes (e.g. after a mark toggle) reuse whatever the user
-// last selected on the grid, instead of resetting to a default.
+// The sort key (and randomSeed for random) is module-local so background
+// refreshes reuse whatever the user last selected on the grid. Nothing is
+// fetched until App calls setWatchlistSort on mount, so the first request
+// already carries the right sort instead of a default that is immediately
+// replaced.
 
-const listeners = new Set<(entries: Title[]) => void>();
-let current: Title[] = [];
+export interface WatchlistState {
+  entries: Title[];
+  /** False until the first fetch has settled. */
+  ready: boolean;
+}
+
+const listeners = new Set<(state: WatchlistState) => void>();
+let current: WatchlistState = { entries: [], ready: false };
 let currentSort: SortKey = "popularity";
 let currentRandomSeed = 1;
+let loadPromise: Promise<void> | null = null;
+let generation = 0;
 
 function notify(): void {
   listeners.forEach((l) => l(current));
 }
 
+// Only the most recently issued request may update state; an older response
+// arriving late (e.g. after spamming reshuffle) is dropped.
 async function loadFromServer(): Promise<void> {
+  const gen = ++generation;
+  let next: WatchlistState;
   try {
     const res = await api.watchlist(currentSort, currentRandomSeed);
-    current = res.entries;
+    next = { entries: res.entries, ready: true };
   } catch (err) {
     console.error("watchlist load failed:", err);
-    current = [];
+    next = { entries: [], ready: true };
   }
+  if (gen !== generation) return;
+  current = next;
   notify();
-}
-
-let loadPromise: Promise<void> | null = null;
-if (typeof window !== "undefined") {
-  loadPromise = loadFromServer();
 }
 
 export function refreshWatchlist(): Promise<void> {
@@ -41,27 +51,25 @@ export function refreshWatchlist(): Promise<void> {
   return loadPromise;
 }
 
-// Update the sort key the module uses for fetches. If anything actually
-// changed, kick off a refetch and return that promise so callers can await it.
+// Update the sort key the module uses for fetches. Loads on first call, and
+// refetches whenever the sort actually changed.
 export function setWatchlistSort(sort: SortKey, randomSeed: number): Promise<void> {
-  if (sort === currentSort && randomSeed === currentRandomSeed) {
-    return loadPromise ?? Promise.resolve();
-  }
+  if (loadPromise && sort === currentSort && randomSeed === currentRandomSeed) return loadPromise;
   currentSort = sort;
   currentRandomSeed = randomSeed;
-  loadPromise = loadFromServer();
-  return loadPromise;
+  return refreshWatchlist();
 }
 
-export function useWatchlist(): { entries: Title[]; refresh: () => Promise<void> } {
-  const [entries, setEntries] = useState<Title[]>(current);
+export function useWatchlist(): WatchlistState & { refresh: () => Promise<void> } {
+  const [state, setState] = useState<WatchlistState>(current);
   useEffect(() => {
-    const onChange = (next: Title[]): void => setEntries(next);
+    const onChange = (next: WatchlistState): void => setState(next);
     listeners.add(onChange);
-    if (loadPromise) void loadPromise.then(() => setEntries(current));
+    // Pick up anything that changed between render and subscribe.
+    onChange(current);
     return () => {
       listeners.delete(onChange);
     };
   }, []);
-  return { entries, refresh: refreshWatchlist };
+  return { ...state, refresh: refreshWatchlist };
 }
