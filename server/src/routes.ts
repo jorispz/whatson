@@ -1,4 +1,4 @@
-import { Router, type Request } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 import { config } from "./config.js";
 import { db, defaultProfileId, getMeta } from "./db.js";
 import { resolveViaJustWatch } from "./justwatch.js";
@@ -12,6 +12,15 @@ import {
 } from "./tmdb.js";
 
 export const api = Router();
+
+// Express 4 ignores the promise an async handler returns, so a rejection after
+// the first await would become an unhandled rejection and take the process
+// down. Route it to the error middleware instead.
+function asyncHandler(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
+  return (req, res, next) => {
+    fn(req, res).catch(next);
+  };
+}
 
 interface TitleRow {
   tmdb_id: number;
@@ -318,7 +327,7 @@ async function resolveRedirects(url: string, timeoutMs = 5000): Promise<string> 
   }
 }
 
-api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
+api.get("/deeplink/:mediaType/:id/:providerKey", asyncHandler(async (req, res) => {
   const { mediaType, id: idRaw, providerKey } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -329,16 +338,17 @@ api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
     res.status(400).json({ error: "invalid id" });
     return;
   }
-  const providerRow = db
-    .prepare("SELECT name FROM providers WHERE key = ?")
-    .get(providerKey) as { name: string } | undefined;
-  if (!providerRow) {
+  const providerRow = providerKey
+    ? (db.prepare("SELECT name FROM providers WHERE key = ?").get(providerKey) as { name: string } | undefined)
+    : undefined;
+  if (!providerKey || !providerRow) {
     res.status(400).json({ error: "unknown providerKey" });
     return;
   }
 
   try {
     const page = await fetch(`https://www.themoviedb.org/${mediaType}/${id}/watch?locale=NL`, {
+      signal: AbortSignal.timeout(10_000),
       headers: {
         "User-Agent": "whatson/0.1 (personal non-commercial)",
         Accept: "text/html,application/xhtml+xml",
@@ -396,9 +406,9 @@ api.get("/deeplink/:mediaType/:id/:providerKey", async (req, res) => {
     console.error("deeplink resolve failed:", err);
     res.status(502).json({ error: "upstream error" });
   }
-});
+}));
 
-api.get("/recommendations/:mediaType/:id", async (req, res) => {
+api.get("/recommendations/:mediaType/:id", asyncHandler(async (req, res) => {
   const { mediaType, id: idRaw } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -482,9 +492,9 @@ api.get("/recommendations/:mediaType/:id", async (req, res) => {
     }));
 
   res.json({ results: ordered });
-});
+}));
 
-api.get("/details/:mediaType/:id", async (req, res) => {
+api.get("/details/:mediaType/:id", asyncHandler(async (req, res) => {
   const { mediaType, id: idRaw } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -530,7 +540,7 @@ api.get("/details/:mediaType/:id", async (req, res) => {
     console.error("details fetch failed:", err);
     res.status(502).json({ error: "upstream error" });
   }
-});
+}));
 
 api.get("/providers", (_req, res) => {
   const rows = db.prepare("SELECT id, key, name, logo_path FROM providers ORDER BY name").all() as ProviderRow[];
@@ -552,7 +562,7 @@ api.get("/status", (_req, res) => {
   });
 });
 
-api.post("/sync", async (_req, res) => {
+api.post("/sync", (_req, res) => {
   if (isSyncing()) {
     res.status(409).json({ error: "sync already running" });
     return;
@@ -907,7 +917,7 @@ api.get("/marks", (req, res) => {
   res.json(rowsToMarksObject(rows));
 });
 
-api.put("/marks/:mediaType/:tmdbId", async (req, res) => {
+api.put("/marks/:mediaType/:tmdbId", asyncHandler(async (req, res) => {
   const { mediaType, tmdbId: idRaw } = req.params;
   if (mediaType !== "movie" && mediaType !== "tv") {
     res.status(400).json({ error: "invalid mediaType" });
@@ -986,7 +996,7 @@ api.put("/marks/:mediaType/:tmdbId", async (req, res) => {
     );
   }
   res.json({ ok: true });
-});
+}));
 
 /**
  * Additive merge import: for each entry, OR the incoming flags onto any
@@ -1260,7 +1270,7 @@ api.delete("/notifications/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-api.get("/tmdb-search", async (req, res) => {
+api.get("/tmdb-search", asyncHandler(async (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
   if (!q) {
     res.json({ results: [] });
@@ -1350,4 +1360,10 @@ api.get("/tmdb-search", async (req, res) => {
   });
 
   res.json({ results });
+}));
+
+// Must stay last: unmatched /api paths get a JSON 404 instead of falling
+// through to the SPA index.html.
+api.use((_req, res) => {
+  res.status(404).json({ error: "not found" });
 });
