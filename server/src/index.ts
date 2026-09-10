@@ -15,6 +15,9 @@ app.use("/api", api);
 // In production, serve the built client from ../../client/dist
 const clientDist = path.resolve(here, "..", "..", "client", "dist");
 if (fs.existsSync(clientDist)) {
+  // Vite emits content-hashed filenames under /assets, so those can be cached
+  // forever; index.html (and everything else) must revalidate on every load.
+  app.use("/assets", express.static(path.join(clientDist, "assets"), { immutable: true, maxAge: "1y" }));
   app.use(express.static(clientDist));
   app.get("*", (_req, res) => {
     res.sendFile(path.join(clientDist, "index.html"));

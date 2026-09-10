@@ -27,8 +27,10 @@ grid, tuned for deliberate digging rather than passive scrolling.
 - **Genre AND mode** — intersect multiple genres instead of unioning
   them, so "Horror + Comedy" actually returns the rare crossovers
   rather than everything in either bucket.
-- **Watchlist and seen marks** — kept locally in your browser, so you
-  can build up your own discovery queue.
+- **Watchlist and seen marks** — stored server-side per profile, so the
+  same queue follows you across devices on your network. Titles you
+  watchlist from TMDB search trigger a notification when they arrive on
+  one of your streamers.
 
 ## Setup
 

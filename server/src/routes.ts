@@ -71,6 +71,71 @@ function parseCsvInt(s: unknown): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
+// Integer query param with a default and inclusive bounds. Anything that is
+// not a finite integer (missing, "abc", repeated params) yields the default
+// instead of a NaN that SQLite would reject with "datatype mismatch".
+function parseBoundedInt(raw: unknown, def: number, min: number, max: number): number {
+  const n = typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isInteger(n)) return def;
+  return Math.min(Math.max(n, min), max);
+}
+
+const SORT_KEYS = ["popularity", "rating", "year", "title", "random"] as const;
+type SortKey = (typeof SORT_KEYS)[number];
+
+function parseSort(raw: unknown): SortKey {
+  return typeof raw === "string" && (SORT_KEYS as readonly string[]).includes(raw) ? (raw as SortKey) : "popularity";
+}
+
+// The random-order hash multiplies by a 32-bit constant; a seed above 2^31
+// pushes the product past int64 into REAL and every row hashes to the same
+// value. Keep seeds in 31 bits.
+function parseRandomSeed(raw: unknown): number {
+  const n = typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isInteger(n) || n <= 0) return 1;
+  return (n & 0x7fffffff) || 1;
+}
+
+// Deterministic tiebreak so LIMIT/OFFSET pages never overlap or skip when the
+// primary sort has equal values (every title sorted A–Z, ratings, years).
+const TIEBREAK = "t.media_type, t.tmdb_id";
+
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+// Tiny expiring cache with a size cap, so long-lived processes (the Pi runs
+// for months) don't accumulate one entry per title ever viewed.
+class TtlCache<V> {
+  private readonly map = new Map<string, { value: V; expires: number }>();
+  constructor(
+    private readonly ttlMs: number,
+    private readonly maxEntries: number,
+  ) {}
+  get(key: string): V | undefined {
+    const hit = this.map.get(key);
+    if (!hit) return undefined;
+    if (hit.expires <= Date.now()) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return hit.value;
+  }
+  set(key: string, value: V): void {
+    if (this.map.size >= this.maxEntries) {
+      const now = Date.now();
+      for (const [k, v] of this.map) if (v.expires <= now) this.map.delete(k);
+      // Still full: evict oldest insertions (Map preserves insertion order).
+      while (this.map.size >= this.maxEntries) {
+        const oldest = this.map.keys().next().value;
+        if (oldest === undefined) break;
+        this.map.delete(oldest);
+      }
+    }
+    this.map.set(key, { value, expires: Date.now() + this.ttlMs });
+  }
+}
+
 // Fetch a list-valued column (e.g. genre_id, provider_id) for a page of
 // (mediaType, tmdbId) pairs in a single batched query per media_type. Returns
 // a map keyed by `${mediaType}:${tmdbId}`. Used instead of correlated
@@ -128,21 +193,16 @@ function parseCompositeKeys(s: unknown): { mediaType: "movie" | "tv"; id: number
     .filter((x): x is { mediaType: "movie" | "tv"; id: number } => x !== null);
 }
 
-const detailsCache = new Map<
-  string,
-  {
-    youtubeKey: string | null;
-    runtime: number | null;
-    certification: string | null;
-    seasonCount: number | null;
-    episodeCount: number | null;
-    expires: number;
-  }
->();
-const DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
-
-const recsCache = new Map<string, { ids: number[]; expires: number }>();
-const RECS_TTL_MS = 24 * 60 * 60 * 1000;
+interface TitleDetailsDto {
+  youtubeKey: string | null;
+  runtime: number | null;
+  certification: string | null;
+  seasonCount: number | null;
+  episodeCount: number | null;
+}
+const DAY_MS = 24 * 60 * 60 * 1000;
+const detailsCache = new TtlCache<TitleDetailsDto>(DAY_MS, 5000);
+const recsCache = new TtlCache<number[]>(DAY_MS, 5000);
 const RECS_MAX = 12;
 
 // The titles table only changes inside a sync, so the unfiltered count is
@@ -290,6 +350,23 @@ const PROVIDER_SITES: Record<string, ProviderSite> = {
   },
 };
 
+// The clickout target and its redirect chain come from third-party HTML, so
+// only follow plain public http(s) URLs: no other schemes, no loopback or
+// private-range hosts, which would turn the resolver into an SSRF proxy.
+function isPublicHttpUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    const h = u.hostname.toLowerCase();
+    if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) return false;
+    if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return false;
+    if (h.startsWith("[")) return false; // IPv6 literals: not something a streamer uses
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function matchesProviderHost(url: string, site: ProviderSite): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -362,7 +439,8 @@ api.get("/deeplink/:mediaType/:id/:providerKey", asyncHandler(async (req, res) =
     }
     const html = await page.text();
     const clickoutTarget = pickDirectUrl(html, providerRow.name);
-    let url = clickoutTarget ? await resolveRedirects(clickoutTarget) : null;
+    let url = clickoutTarget && isPublicHttpUrl(clickoutTarget) ? await resolveRedirects(clickoutTarget) : null;
+    if (url && !isPublicHttpUrl(url)) url = null;
     const site = PROVIDER_SITES[providerKey];
     const stripQuery = (raw: string): string => {
       // Strip affiliate tracking query/fragment that rides along on the redirect
@@ -422,12 +500,12 @@ api.get("/recommendations/:mediaType/:id", asyncHandler(async (req, res) => {
   const cacheKey = `${mediaType}:${id}`;
   let ids: number[];
   const cached = recsCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) {
-    ids = cached.ids;
+  if (cached) {
+    ids = cached;
   } else {
     try {
       ids = await fetchRecommendations(mediaType, id);
-      recsCache.set(cacheKey, { ids, expires: Date.now() + RECS_TTL_MS });
+      recsCache.set(cacheKey, ids);
     } catch (err) {
       console.error("recommendations fetch failed:", err);
       res.status(502).json({ error: "upstream error" });
@@ -507,35 +585,21 @@ api.get("/details/:mediaType/:id", asyncHandler(async (req, res) => {
   }
   const cacheKey = `${mediaType}:${id}`;
   const cached = detailsCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) {
-    res.json({
-      youtubeKey: cached.youtubeKey,
-      runtime: cached.runtime,
-      certification: cached.certification,
-      seasonCount: cached.seasonCount,
-      episodeCount: cached.episodeCount,
-    });
+  if (cached) {
+    res.json(cached);
     return;
   }
   try {
     const details = await fetchTitleDetails(mediaType, id);
-    const trailer = pickBestTrailer(details.videos);
-    const youtubeKey = trailer?.key ?? null;
-    detailsCache.set(cacheKey, {
-      youtubeKey,
+    const dto: TitleDetailsDto = {
+      youtubeKey: pickBestTrailer(details.videos)?.key ?? null,
       runtime: details.runtime,
       certification: details.certification,
       seasonCount: details.seasonCount,
       episodeCount: details.episodeCount,
-      expires: Date.now() + DETAILS_TTL_MS,
-    });
-    res.json({
-      youtubeKey,
-      runtime: details.runtime,
-      certification: details.certification,
-      seasonCount: details.seasonCount,
-      episodeCount: details.episodeCount,
-    });
+    };
+    detailsCache.set(cacheKey, dto);
+    res.json(dto);
   } catch (err) {
     console.error("details fetch failed:", err);
     res.status(502).json({ error: "upstream error" });
@@ -554,10 +618,9 @@ api.get("/genres", (_req, res) => {
 
 api.get("/status", (_req, res) => {
   const lastSync = getMeta("last_sync_at") ?? null;
-  const titleCount = (db.prepare("SELECT COUNT(*) AS n FROM titles").get() as { n: number }).n;
   res.json({
     lastSyncAt: lastSync,
-    titleCount,
+    titleCount: unfilteredTitlesTotal(),
     syncing: isSyncing(),
   });
 });
@@ -586,15 +649,10 @@ api.get("/titles", (req, res) => {
   const maxVotes = req.query.maxVotes !== undefined ? Number(req.query.maxVotes) : null;
   const yearFrom = req.query.yearFrom !== undefined ? Number(req.query.yearFrom) : null;
   const yearTo = req.query.yearTo !== undefined ? Number(req.query.yearTo) : null;
-  const sort =
-    typeof req.query.sort === "string" &&
-    ["popularity", "rating", "year", "title", "random"].includes(req.query.sort)
-      ? (req.query.sort as "popularity" | "rating" | "year" | "title" | "random")
-      : "popularity";
-  const randomSeed =
-    sort === "random" && req.query.randomSeed !== undefined ? Number(req.query.randomSeed) || 1 : 1;
-  const limit = Math.min(Math.max(Number(req.query.limit ?? 60), 1), 200);
-  const offset = Math.max(Number(req.query.offset ?? 0), 0);
+  const sort = parseSort(req.query.sort);
+  const randomSeed = parseRandomSeed(req.query.randomSeed);
+  const limit = parseBoundedInt(req.query.limit, 60, 1, 200);
+  const offset = parseBoundedInt(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
   const where: string[] = [];
   const params: Record<string, unknown> = {};
@@ -603,11 +661,12 @@ api.get("/titles", (req, res) => {
     const terms = q.split(/\s+/).filter(Boolean).slice(0, 8);
     terms.forEach((term, i) => {
       const paramName = `q${i}`;
+      const like = `LIKE @${paramName} ESCAPE '\\'`;
       const fields = includeOverview
-        ? `t.title LIKE @${paramName} OR t.original_title LIKE @${paramName} OR t.overview LIKE @${paramName}`
-        : `t.title LIKE @${paramName} OR t.original_title LIKE @${paramName}`;
+        ? `t.title ${like} OR t.original_title ${like} OR t.overview ${like}`
+        : `t.title ${like} OR t.original_title ${like}`;
       where.push(`(${fields})`);
-      params[paramName] = `%${term}%`;
+      params[paramName] = `%${escapeLike(term)}%`;
     });
   }
   if (mediaTypes.length > 0) {
@@ -692,7 +751,7 @@ api.get("/titles", (req, res) => {
     });
   }
 
-  const orderBy =
+  const primaryOrder =
     sort === "rating"
       ? "t.vote_average DESC, t.vote_count DESC"
       : sort === "year"
@@ -702,6 +761,7 @@ api.get("/titles", (req, res) => {
           : sort === "random"
             ? "((((t.tmdb_id | @randomSeed) - (t.tmdb_id & @randomSeed)) * 2654435761) & 2147483647)"
             : "t.popularity DESC";
+  const orderBy = `${primaryOrder}, ${TIEBREAK}`;
   if (sort === "random") params.randomSeed = randomSeed;
 
   // The grid only ever browses what's currently on a tracked streamer.
@@ -789,22 +849,29 @@ function rowsToMarksObject(rows: MarkRow[]): Record<string, { watchlist?: true; 
   return out;
 }
 
+class UnknownProfileError extends Error {
+  status = 404;
+  constructor() {
+    super("unknown profile");
+  }
+}
+
 /**
  * Resolve which profile this request is acting on. Clients send the active
- * profile id via X-Whatson-Profile; missing / unknown / malformed values
- * fall back to the seeded default profile so older clients (and curl) keep
- * working unchanged.
+ * profile id via X-Whatson-Profile. A missing header falls back to the oldest
+ * profile so curl and older clients keep working, but a header that names a
+ * profile that no longer exists is a 404: silently redirecting those writes
+ * into another profile would corrupt that profile's marks. The client reacts
+ * by re-selecting (see profile.ts).
  */
 function activeProfileId(req: Request): number {
   const raw = req.header("x-whatson-profile");
-  if (raw) {
-    const id = Number(raw);
-    if (Number.isFinite(id) && id > 0) {
-      const exists = db.prepare("SELECT 1 FROM profiles WHERE id = ?").get(id);
-      if (exists) return id;
-    }
-  }
-  return defaultProfileId();
+  if (!raw) return defaultProfileId();
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) throw new UnknownProfileError();
+  const exists = db.prepare("SELECT 1 FROM profiles WHERE id = ?").get(id);
+  if (!exists) throw new UnknownProfileError();
+  return id;
 }
 
 interface ProfileRow {
@@ -967,7 +1034,9 @@ api.put("/marks/:mediaType/:tmdbId", asyncHandler(async (req, res) => {
     // last_seen_available semantics:
     //   timestamp = "we already know this is available, no notification pending"
     //   NULL      = "armed: fire a notification next time this appears in availability"
-    // For seen-only marks (watchlist=0) the column is irrelevant — keep it NULL.
+    // For seen-only marks (watchlist=0) the column is irrelevant and reset to
+    // NULL, so that a later re-watchlisting starts from a fresh arming state
+    // instead of inheriting a stale timestamp (see the upsert below).
     const lastSeenAvailable = watchlist ? (currentlyAvailable ? new Date().toISOString() : null) : null;
     db.prepare(
       `
@@ -981,7 +1050,11 @@ api.put("/marks/:mediaType/:tmdbId", asyncHandler(async (req, res) => {
         title        = COALESCE(marks.title,        excluded.title),
         poster_path  = COALESCE(marks.poster_path,  excluded.poster_path),
         release_year = COALESCE(marks.release_year, excluded.release_year),
-        last_seen_available = COALESCE(marks.last_seen_available, excluded.last_seen_available)
+        last_seen_available = CASE
+          WHEN excluded.watchlist = 0 THEN NULL
+          WHEN marks.watchlist = 0    THEN excluded.last_seen_available
+          ELSE COALESCE(marks.last_seen_available, excluded.last_seen_available)
+        END
     `,
     ).run(
       profileId,
@@ -1028,7 +1101,11 @@ api.post("/marks/import", (req, res) => {
       title        = COALESCE(marks.title,        excluded.title),
       poster_path  = COALESCE(marks.poster_path,  excluded.poster_path),
       release_year = COALESCE(marks.release_year, excluded.release_year),
-      last_seen_available = COALESCE(marks.last_seen_available, excluded.last_seen_available)
+      last_seen_available = CASE
+        WHEN max(marks.watchlist, excluded.watchlist) = 0 THEN NULL
+        WHEN marks.watchlist = 0 THEN excluded.last_seen_available
+        ELSE COALESCE(marks.last_seen_available, excluded.last_seen_available)
+      END
   `,
   );
   let imported = 0;
@@ -1097,26 +1174,22 @@ interface WatchlistRow {
   added_at: string;
 }
 
-// Watchlist entries (marks.watchlist = 1), joined with the catalog where the
-// title is still around. For titles that have left every tracked streamer the
-// catalog row is gone, so we render from the snapshot columns on marks and
-// flag the entry as unavailable. Returned shape mirrors Title so the same
-// grid renderer can show both live and orphan entries.
+// Watchlist entries (marks.watchlist = 1), joined with the catalog. Sync keeps
+// a catalog row for every watchlist title even when it has left all tracked
+// streamers, so the join normally hits; the snapshot columns on marks only
+// cover the case where TMDB was unreachable when the mark was made. Entries
+// without availability are flagged isAvailable=false. Returned shape mirrors
+// Title so the same grid renderer can show both.
 //
 // Accepts the same sort param as /api/titles. Orphan rows have NULL for
 // rating/popularity/etc so they cluster at the bottom of DESC sorts and at
 // the top of title-ascending — same NULLS LAST trick used by /api/titles.
 api.get("/watchlist", (req, res) => {
   const profileId = activeProfileId(req);
-  const sort =
-    typeof req.query.sort === "string" &&
-    ["popularity", "rating", "year", "title", "random"].includes(req.query.sort)
-      ? (req.query.sort as "popularity" | "rating" | "year" | "title" | "random")
-      : "popularity";
-  const randomSeed =
-    sort === "random" && req.query.randomSeed !== undefined ? Number(req.query.randomSeed) || 1 : 1;
+  const sort = parseSort(req.query.sort);
+  const randomSeed = parseRandomSeed(req.query.randomSeed);
   const orderBy =
-    sort === "rating"
+    (sort === "rating"
       ? "vote_average DESC NULLS LAST, vote_count DESC NULLS LAST"
       : sort === "year"
         ? "release_year DESC NULLS LAST, popularity DESC NULLS LAST"
@@ -1124,7 +1197,7 @@ api.get("/watchlist", (req, res) => {
           ? "title COLLATE NOCASE ASC"
           : sort === "random"
             ? "((((m.tmdb_id | @randomSeed) - (m.tmdb_id & @randomSeed)) * 2654435761) & 2147483647)"
-            : "popularity DESC NULLS LAST";
+            : "popularity DESC NULLS LAST") + ", m.media_type, m.tmdb_id";
   const params: Record<string, unknown> = { pid: profileId };
   if (sort === "random") params.randomSeed = randomSeed;
   const rows = db

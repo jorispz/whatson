@@ -17,7 +17,12 @@ export function startAutoSync(): void {
 
   const intervalMs = config.autoSyncHours * 60 * 60 * 1000;
 
-  const schedule = (delayMs: number): void => {
+  // setTimeout treats delays above 2^31-1 ms as 1 ms, which would turn a typo
+  // like AUTO_SYNC_HOURS=1000 into a tight sync loop.
+  const MAX_TIMEOUT_MS = 2_147_483_647;
+
+  const schedule = (rawDelayMs: number): void => {
+    const delayMs = Math.min(rawDelayMs, MAX_TIMEOUT_MS);
     const mins = Math.round(delayMs / 60_000);
     const when = new Date(Date.now() + delayMs).toISOString();
     console.log(`auto-sync: next run in ${mins} min (${when})`);
