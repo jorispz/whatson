@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
-import { timeAgo } from "../App";
 import { refreshProfiles, setActiveProfile, type Profile } from "../profile";
+import { relativeTime } from "../time";
 import type { Status } from "../types";
+import { useDialog } from "../useDialog";
 
 interface Props {
   profiles: Profile[];
@@ -14,26 +15,21 @@ interface Props {
 }
 
 export function SettingsModal({ profiles, activeId, status, onSync, onClose }: Props): JSX.Element {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const { panelRef, backdropProps } = useDialog<HTMLDivElement>(onClose);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
-      onClick={onClose}
-    >
-      <div className="min-h-full flex items-start sm:items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto">
+      <div className="min-h-full flex items-start sm:items-center justify-center p-4" {...backdropProps}>
         <div
-          className="bg-panel rounded-xl overflow-hidden max-w-lg w-full shadow-2xl ring-1 ring-white/10"
-          onClick={(e) => e.stopPropagation()}
+          ref={panelRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-heading"
+          className="bg-panel rounded-xl overflow-hidden max-w-lg w-full shadow-2xl ring-1 ring-white/10 outline-none"
         >
           <div className="flex items-center justify-between p-4 border-b border-white/5">
-            <h2 className="text-lg font-medium">Settings</h2>
+            <h2 id="settings-heading" className="text-lg font-medium">Settings</h2>
             <button
               onClick={onClose}
               className="rounded p-1 text-mute hover:text-ink hover:bg-white/5"
@@ -71,9 +67,9 @@ function ProfilesSection({
   // appears on the *first* time a second profile is being added.
   const isFirstSecondProfile = profiles.length === 1;
   const onlyExisting = profiles[0];
-  const [renameExistingTo, setRenameExistingTo] = useState(
-    isFirstSecondProfile && onlyExisting ? onlyExisting.name : "",
-  );
+  // Seeded when the user opens the add form, not at mount: profiles may not
+  // have loaded yet when this component first renders.
+  const [renameExistingTo, setRenameExistingTo] = useState("");
 
   const reset = (): void => {
     setAdding(false);
@@ -128,7 +124,10 @@ function ProfilesSection({
       {!adding && (
         <button
           type="button"
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            setRenameExistingTo(onlyExisting?.name ?? "");
+            setAdding(true);
+          }}
           className="mt-3 rounded-lg ring-1 ring-white/10 hover:ring-accent px-3 py-2 text-sm text-ink w-full"
         >
           + Add profile
@@ -248,12 +247,19 @@ function ProfileRow({
     }
   };
 
+  const cancelEdit = (): void => {
+    setEditing(false);
+    setName(profile.name);
+    setError(null);
+  };
+
   return (
     <div
-      className={`flex items-center gap-2 rounded-lg px-3 py-2 ring-1 ${
+      className={`rounded-lg px-3 py-2 ring-1 ${
         active ? "bg-accent/10 ring-accent/40" : "bg-panel2 ring-white/5"
       }`}
     >
+      <div className="flex items-center gap-2">
       {editing ? (
         <>
           <input
@@ -266,11 +272,18 @@ function ProfileRow({
             onKeyDown={(e) => {
               if (e.key === "Enter") void submitRename();
               if (e.key === "Escape") {
-                setEditing(false);
-                setName(profile.name);
+                e.stopPropagation();
+                cancelEdit();
               }
             }}
           />
+          <button
+            onClick={cancelEdit}
+            disabled={busy}
+            className="text-xs px-2 py-1 rounded text-mute hover:text-ink disabled:opacity-50"
+          >
+            Cancel
+          </button>
           <button
             onClick={() => void submitRename()}
             disabled={busy}
@@ -309,7 +322,8 @@ function ProfileRow({
           )}
         </>
       )}
-      {error && <div className="text-xs text-red-400">{error}</div>}
+      </div>
+      {error && <div className="mt-1.5 text-xs text-red-400">{error}</div>}
     </div>
   );
 }
@@ -331,7 +345,7 @@ function CatalogSection({
             <>
               <div className="text-ink">{status.titleCount.toLocaleString()} titles</div>
               <div className="text-xs text-mute">
-                {status.lastSyncAt ? `Last synced ${timeAgo(status.lastSyncAt)}` : "Never synced"}
+                {status.lastSyncAt ? `Last synced ${relativeTime(status.lastSyncAt)}` : "Never synced"}
               </div>
             </>
           ) : (

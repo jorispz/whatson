@@ -38,6 +38,7 @@ export function FiltersPanel({ filters, providers, genres, onChange, onReset }: 
           value={filters.q}
           onChange={(e) => onChange({ q: e.target.value })}
           placeholder="Search title…"
+          aria-label="Search title"
           className="w-full bg-panel2 rounded-md px-3 py-2 ring-1 ring-white/10 focus:ring-accent outline-none"
         />
         <label className="flex items-center gap-2 mt-2 text-xs text-mute hover:text-ink cursor-pointer">
@@ -186,6 +187,13 @@ function Chip({
 const RATING_STEP = 0.5;
 const RATING_MAX = 10;
 
+// The max input is later in DOM order, so when both thumbs overlap it sits on
+// top. At the top stop that means neither can move (max clamps to itself and
+// min is unreachable); lift the min input above it in that one case.
+function thumbStackStyle(minOnTop: boolean): React.CSSProperties | undefined {
+  return minOnTop ? { zIndex: 3 } : undefined;
+}
+
 const YEAR_MIN = 1900;
 const YEAR_MAX = new Date().getFullYear();
 
@@ -249,7 +257,7 @@ function RatingRange({
         onPointerMove={onFillMove}
         onPointerUp={onFillUp}
         onPointerCancel={onFillUp}
-        aria-label="Drag to shift rating range"
+        aria-hidden="true"
       >
         <div className="h-1 w-full bg-accent rounded-full" />
       </div>
@@ -261,6 +269,7 @@ function RatingRange({
         value={min}
         onChange={(e) => onChange(Math.min(Number(e.target.value), max), max)}
         aria-label="Minimum rating"
+        style={thumbStackStyle(min === max && max === RATING_MAX)}
       />
       <input
         type="range"
@@ -338,7 +347,7 @@ function YearRange({
         onPointerMove={onFillMove}
         onPointerUp={onFillUp}
         onPointerCancel={onFillUp}
-        aria-label="Drag to shift year range"
+        aria-hidden="true"
       >
         <div className="h-1 w-full bg-accent rounded-full" />
       </div>
@@ -350,6 +359,7 @@ function YearRange({
         value={lo}
         onChange={(e) => emit(Math.min(Number(e.target.value), hi), hi)}
         aria-label="Minimum year"
+        style={thumbStackStyle(lo === hi && hi === YEAR_MAX)}
       />
       <input
         type="range"
@@ -461,7 +471,7 @@ function VotesRange({
         onPointerMove={onFillMove}
         onPointerUp={onFillUp}
         onPointerCancel={onFillUp}
-        aria-label="Drag to shift votes range"
+        aria-hidden="true"
       >
         <div className="h-1 w-full bg-accent rounded-full" />
       </div>
@@ -476,6 +486,7 @@ function VotesRange({
           setFromIndices(next, hiIdx);
         }}
         aria-label="Minimum votes"
+        style={thumbStackStyle(loIdx === hiIdx && hiIdx === VOTE_LAST_IDX)}
       />
       <input
         type="range"

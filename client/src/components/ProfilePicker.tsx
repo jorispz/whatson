@@ -13,9 +13,14 @@ interface Props {
  */
 export function ProfilePicker({ profiles, onPick }: Props): JSX.Element {
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-bg flex flex-col items-center justify-center p-6">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="profile-picker-heading"
+      className="fixed inset-0 z-50 bg-bg flex flex-col items-center justify-center p-6"
+    >
       <div className="w-full max-w-sm">
-        <h2 className="text-2xl font-semibold mb-1 text-center">Who's watching?</h2>
+        <h2 id="profile-picker-heading" className="text-2xl font-semibold mb-1 text-center">Who's watching?</h2>
         <p className="text-sm text-mute mb-6 text-center">Pick a profile to continue.</p>
         <div className="flex flex-col gap-2">
           {profiles.map((p) => (

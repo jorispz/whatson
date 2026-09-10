@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type ProfileDto } from "./api";
-
-const PROFILE_STORAGE_KEY = "whatson.profileId.v1";
+import { PROFILE_STORAGE_KEY } from "./storageKeys";
 
 export type Profile = ProfileDto;
 
@@ -55,6 +54,13 @@ function reconcile(profiles: Profile[]): void {
     // Single profile (the seeded default): silently use it.
     activeId = profiles[0].id;
     writeStoredId(activeId);
+    if (stored !== null && typeof window !== "undefined") {
+      // The stored id pointed at a profile that no longer exists (deleted
+      // from another device). Requests made so far this page load were
+      // answered 404 by the server, so start over under the valid id.
+      window.location.reload();
+      return;
+    }
   } else if (profiles.length > 1) {
     // Multiple profiles + nothing valid stored → user has to pick.
     activeId = null;

@@ -6,9 +6,12 @@ import type {
   SortKey,
   Status,
   Title,
+  TitleDetails,
   TitlesResponse,
   TmdbSearchResult,
 } from "./types";
+import type { Marks } from "./marks";
+import { PROFILE_STORAGE_KEY } from "./storageKeys";
 
 export interface TitlesQueryExtras {
   onlyIds?: string[];
@@ -47,22 +50,33 @@ export function buildTitlesQuery(
   return params.toString();
 }
 
-// localStorage key holding the active profile id. Read on every request so a
+// The active profile id is read from localStorage on every request so a
 // switch performed elsewhere (or in another tab) doesn't need to thread state
-// through every API call site. Server falls back to the default profile if
-// the header is missing or invalid.
-const PROFILE_STORAGE_KEY = "whatson.profileId.v1";
-
+// through every API call site. The server answers 404 "unknown profile" if
+// the stored id no longer exists; profile.ts reconciles and reloads.
 function activeProfileHeader(): Record<string, string> {
   if (typeof localStorage === "undefined") return {};
   const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
   return raw ? { "X-Whatson-Profile": raw } : {};
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+type JsonInit = Omit<RequestInit, "headers"> & { headers?: Record<string, string> };
+
+// Every route reports failures as { error } JSON; surface that text so the UI
+// can show "name already taken" rather than "409 Conflict".
+async function fetchJson<T>(url: string, init?: JsonInit): Promise<T> {
   const headers = { ...activeProfileHeader(), ...(init?.headers ?? {}) };
   const res = await fetch(url, { ...init, headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) message = body.error;
+    } catch {
+      /* not a JSON body */
+    }
+    throw new Error(message);
+  }
   return (await res.json()) as T;
 }
 
@@ -80,16 +94,8 @@ export const api = {
   genres: (): Promise<Genre[]> => fetchJson<Genre[]>("/api/genres"),
   status: (): Promise<Status> => fetchJson<Status>("/api/status"),
   sync: (): Promise<{ started: boolean }> => fetchJson("/api/sync", { method: "POST" }),
-  details: (
-    mediaType: "movie" | "tv",
-    id: number,
-  ): Promise<{
-    youtubeKey: string | null;
-    runtime: number | null;
-    certification: string | null;
-    seasonCount: number | null;
-    episodeCount: number | null;
-  }> => fetchJson(`/api/details/${mediaType}/${id}`),
+  details: (mediaType: "movie" | "tv", id: number): Promise<TitleDetails> =>
+    fetchJson(`/api/details/${mediaType}/${id}`),
   recommendations: (mediaType: "movie" | "tv", id: number): Promise<{ results: Title[] }> =>
     fetchJson(`/api/recommendations/${mediaType}/${id}`),
   deeplink: (
@@ -103,8 +109,7 @@ export const api = {
     return fetchJson(`/api/watchlist?${params.toString()}`);
   },
   marks: {
-    get: (): Promise<Record<string, { watchlist?: true; seen?: true }>> =>
-      fetchJson("/api/marks"),
+    get: (): Promise<Marks> => fetchJson("/api/marks"),
     put: (
       mediaType: "movie" | "tv",
       tmdbId: number,

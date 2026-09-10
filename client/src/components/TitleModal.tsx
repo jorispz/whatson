@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import type { Genre, Provider, Title } from "../types";
 import { api, openServiceLink, posterUrl } from "../api";
 import { useMarks } from "../marks";
+import { useDialog } from "../useDialog";
+
+// A phone's short side is at most ~500 CSS px in either orientation; tablets
+// start around 744. Used to decide whether a trailer should take the device
+// fullscreen (phones) or stay in its box (tablets, desktops).
+function isPhoneViewport(): boolean {
+  return (
+    window.matchMedia("(pointer: coarse)").matches &&
+    Math.min(window.innerWidth, window.innerHeight) <= 500
+  );
+}
 
 function reviewSearchUrl(title: string, year: number | null, mediaType: "movie" | "tv"): string {
   const parts = [title];
@@ -58,13 +69,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
     if (recsScrollRef.current) recsScrollRef.current.scrollLeft = 0;
   }, [title.mediaType, title.tmdbId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const { panelRef, backdropProps } = useDialog<HTMLDivElement>(onClose);
 
   // Detect a phone held in landscape. Short height + coarse pointer reliably
   // separates phones from tablets and desktops without UA sniffing — an iPad
@@ -133,8 +138,13 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   // silently rejects and the system bar reappears.
   const fullscreen = playing && !!trailerKey && isPhoneLandscape;
 
-  // If the modal unmounts (Esc, recommendation click, backdrop tap) while
-  // still in real fullscreen, restore the document.
+  // Leave real fullscreen whenever the trailer stops. That includes a
+  // recommendation click, which swaps the `title` prop and resets `playing`
+  // without unmounting this component; the unmount cleanup alone left the
+  // phone stuck in fullscreen on a non-playing modal.
+  useEffect(() => {
+    if (!playing && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }, [playing]);
   useEffect(
     () => () => {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
@@ -143,15 +153,16 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
   );
 
   return (
-    <div
-      ref={scrollRef}
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
-      onClick={onClose}
-    >
-      <div className="min-h-full flex items-start sm:items-center justify-center p-4">
+    <div ref={scrollRef} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto">
+      {/* The spacer fills the overlay, so it is the element backdrop clicks land on. */}
+      <div className="min-h-full flex items-start sm:items-center justify-center p-4" {...backdropProps}>
       <div
-        className="bg-panel rounded-xl overflow-hidden max-w-3xl w-full shadow-2xl ring-1 ring-white/10"
-        onClick={(e) => e.stopPropagation()}
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="title-modal-heading"
+        className="bg-panel rounded-xl overflow-hidden max-w-3xl w-full shadow-2xl ring-1 ring-white/10 outline-none"
       >
         {hasHeader && (
           <div
@@ -191,7 +202,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                     // Holding fullscreen for the whole trailer session also
                     // hides the Android system status bar — the CSS overlay
                     // alone can't.
-                    if (window.matchMedia("(pointer: coarse)").matches) {
+                    if (isPhoneViewport()) {
                       document.documentElement.requestFullscreen?.().catch(() => {});
                     }
                   }}
@@ -216,7 +227,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
           {poster && (
             <img
               src={poster}
-              alt={title.title}
+              alt=""
               className={`hidden sm:block w-40 self-start rounded-md shadow-lg ring-1 ring-white/10 relative ${
                 hasHeader ? "-mt-20" : ""
               }`}
@@ -257,7 +268,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
               </button>
             </div>
 
-            <h2 className="mt-2 text-2xl font-semibold leading-tight">{title.title}</h2>
+            <h2 id="title-modal-heading" className="mt-2 text-2xl font-semibold leading-tight">{title.title}</h2>
             <div className="mt-1 text-sm text-mute flex items-center gap-3 flex-wrap">
               <span>{title.mediaType === "movie" ? "Movie" : "TV Series"}</span>
               {title.releaseYear && <span>{title.releaseYear}</span>}
@@ -369,7 +380,7 @@ export function TitleModal({ title, providers, genres, onClose, onSelect }: Prop
                     {r.posterPath ? (
                       <img
                         src={`https://image.tmdb.org/t/p/w185${r.posterPath}`}
-                        alt={r.title}
+                        alt=""
                         className="h-full w-full object-cover"
                         loading="lazy"
                       />

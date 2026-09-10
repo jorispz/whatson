@@ -13,9 +13,9 @@ import { ProfilePicker } from "./components/ProfilePicker";
 import { SettingsModal } from "./components/SettingsModal";
 import { refreshWatchlist, setWatchlistSort, useWatchlist } from "./watchlist";
 import { refreshNotifications, useNotifications } from "./notifications";
+import { useDialog } from "./useDialog";
 
 const PAGE_SIZE = 60;
-const SURPRISE_SAMPLE_SIZE = 500;
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "year", label: "Release date" },
@@ -58,6 +58,7 @@ export function App(): JSX.Element {
   const [status, setStatus] = useState<Status | null>(null);
   const [data, setData] = useState<TitlesResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<Title | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -71,6 +72,7 @@ export function App(): JSX.Element {
   // re-queried through the same guarded effect as any filter change.
   const [refreshNonce, setRefreshNonce] = useState(0);
   const reqIdRef = useRef(0);
+  const prevQueryRef = useRef(DEFAULT_FILTERS.q);
   const tmdbReqIdRef = useRef(0);
   const { marks, getMarks, toggle } = useMarks();
   const profileState = useProfileState();
@@ -212,24 +214,33 @@ export function App(): JSX.Element {
   // from the watchlist store (see gridData below), so nothing is fetched here.
   useEffect(() => {
     const id = ++reqIdRef.current;
+    // Only typing needs debouncing; a chip click or sort change should apply
+    // immediately.
+    const typed = filters.q !== prevQueryRef.current;
+    prevQueryRef.current = filters.q;
     if (filters.watchlistOnly) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    const t = setTimeout(() => {
-      api
-        .titles(filters, PAGE_SIZE, 0)
-        .then((res) => {
-          if (reqIdRef.current === id) setData(res);
-        })
-        .catch((err) => {
-          console.error(err);
-        })
-        .finally(() => {
-          if (reqIdRef.current === id) setLoading(false);
-        });
-    }, 250);
+    setLoadError(null);
+    const t = setTimeout(
+      () => {
+        api
+          .titles(filters, PAGE_SIZE, 0)
+          .then((res) => {
+            if (reqIdRef.current === id) setData(res);
+          })
+          .catch((err) => {
+            console.error(err);
+            if (reqIdRef.current === id) setLoadError(err instanceof Error ? err.message : String(err));
+          })
+          .finally(() => {
+            if (reqIdRef.current === id) setLoading(false);
+          });
+      },
+      typed ? 250 : 0,
+    );
     return () => clearTimeout(t);
     // `filters` is read inside but hideSeen doesn't affect the server query,
     // so we depend on queryFilterSig instead to avoid a useless refetch when
@@ -331,20 +342,6 @@ export function App(): JSX.Element {
     setTmdbExpanded(true);
   }, [filters.q]);
 
-  // Reflect new watchlisted state into the visible TMDB result list without
-  // re-querying TMDB, so the button flips immediately when the user marks
-  // or unmarks a result.
-  useEffect(() => {
-    if (tmdbResults === null) return;
-    setTmdbResults((prev) =>
-      prev === null
-        ? prev
-        : prev.map((r) => ({ ...r, watchlisted: isWatchlisted(r.mediaType, r.tmdbId) })),
-    );
-    // `marks` is the truth source for isWatchlisted; updating when it changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks]);
-
   const updateFilters = useCallback((patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
   }, []);
@@ -359,32 +356,42 @@ export function App(): JSX.Element {
     return gridData.results.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen);
   }, [gridData, filters.hideSeen, marks]);
 
+  // Make the TitleModal participate in the browser back stack so the natural
+  // mobile back gesture closes the modal instead of leaving the app. One
+  // history entry per modal session — recommendation-hopping doesn't stack.
+  // The "already pushed" check reads history.state rather than `selected` so
+  // this callback keeps a stable identity (it's a prop on every TitleCard).
+  const openModal = useCallback((t: Title) => {
+    if (!(window.history.state as { whatsonModal?: boolean } | null)?.whatsonModal) {
+      window.history.pushState({ whatsonModal: true }, "");
+    }
+    setSelected(t);
+  }, []);
+
+  // Let the server pick one random title under the current filters instead of
+  // downloading a 500-title sample. Seen titles are excluded server-side when
+  // Hide seen is on; the watchlist grid picks from the store it renders.
   const surpriseMe = useCallback(async (): Promise<void> => {
     try {
-      const sample = filters.watchlistOnly
-        ? watchlistEntries
-        : (await api.titles(filters, SURPRISE_SAMPLE_SIZE, 0)).results;
-      const pool = filters.hideSeen
-        ? sample.filter((t) => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen)
-        : sample;
-      if (pool.length === 0) return;
+      const notSeen = (t: Title): boolean => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen;
+      let pool: Title[];
+      if (filters.watchlistOnly) {
+        pool = filters.hideSeen ? watchlistEntries.filter(notSeen) : watchlistEntries;
+      } else {
+        const excludeIds = filters.hideSeen
+          ? Object.entries(marks)
+              .filter(([, m]) => m.seen)
+              .map(([key]) => key.replace("-", ":"))
+          : undefined;
+        const res = await api.titles({ ...filters, sort: "random", randomSeed: newSeed() }, 1, 0, { excludeIds });
+        pool = res.results;
+      }
       const pick = pool[Math.floor(Math.random() * pool.length)];
       if (pick) openModal(pick);
     } catch (err) {
       console.error(err);
     }
-  }, [filters, watchlistEntries, marks]);
-
-  // Make the TitleModal participate in the browser back stack so the natural
-  // mobile back gesture closes the modal instead of leaving the app. One
-  // history entry per modal session — recommendation-hopping doesn't stack.
-  const openModal = useCallback(
-    (t: Title) => {
-      if (!selected) window.history.pushState({ whatsonModal: true }, "");
-      setSelected(t);
-    },
-    [selected],
-  );
+  }, [filters, watchlistEntries, marks, openModal]);
   const closeModal = useCallback(() => {
     if ((window.history.state as { whatsonModal?: boolean } | null)?.whatsonModal) {
       // popstate fires from history.back(); that handler clears `selected`.
@@ -439,7 +446,13 @@ export function App(): JSX.Element {
   );
 
   const isEmpty = !gridLoading && gridData && visibleResults.length === 0;
+  // Hide seen can blank out a whole page while more pages exist; say so
+  // instead of claiming nothing matches.
+  const allHiddenBySeen = isEmpty && gridData !== null && gridData.results.length > 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
+
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeNotifications = useCallback(() => setNotificationsOpen(false), []);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -456,6 +469,7 @@ export function App(): JSX.Element {
                 <button
                   type="button"
                   onClick={() => setMode(false)}
+                  aria-pressed={!filters.watchlistOnly}
                   className={`px-3 py-1 rounded-full transition-colors ${
                     !filters.watchlistOnly
                       ? "bg-white/10 text-ink"
@@ -467,6 +481,7 @@ export function App(): JSX.Element {
                 <button
                   type="button"
                   onClick={() => setMode(true)}
+                  aria-pressed={filters.watchlistOnly}
                   className={`px-3 py-1 rounded-full transition-colors ${
                     filters.watchlistOnly
                       ? "bg-accent/80 text-bg"
@@ -535,6 +550,7 @@ export function App(): JSX.Element {
               }}
               className="bg-panel2 rounded px-2 py-1 ring-1 ring-white/10 outline-none focus:ring-accent text-ink"
               title="Sort order"
+              aria-label="Sort order"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -547,6 +563,7 @@ export function App(): JSX.Element {
                 onClick={() => updateFilters({ randomSeed: newSeed() })}
                 className="rounded px-2 py-1 bg-panel2 ring-1 ring-white/10 hover:ring-accent"
                 title="Reshuffle"
+                aria-label="Reshuffle"
               >
                 🔀
               </button>
@@ -577,6 +594,7 @@ export function App(): JSX.Element {
             value={filters.q}
             onChange={(e) => updateFilters({ q: e.target.value })}
             placeholder="Search title…"
+            aria-label="Search title"
             className="w-full bg-panel2 rounded-md px-3 py-2 text-sm ring-1 ring-white/10 focus:ring-accent outline-none"
           />
           <label className="flex items-center gap-2 mt-2 text-xs text-mute hover:text-ink cursor-pointer">
@@ -591,6 +609,11 @@ export function App(): JSX.Element {
         </div>
         {syncError && (
           <div className="bg-red-900/40 text-red-200 text-xs px-4 py-1">{syncError}</div>
+        )}
+        {loadError && (
+          <div className="bg-red-900/40 text-red-200 text-xs px-4 py-1" role="alert">
+            Couldn’t load titles: {loadError}
+          </div>
         )}
       </header>
 
@@ -619,7 +642,7 @@ export function App(): JSX.Element {
             <>
               {isEmpty && (
                 <div className="rounded-lg bg-panel p-8 text-center text-mute">
-                  Nothing matches your filters.
+                  {allHiddenBySeen ? "Everything on this page is marked as seen." : "Nothing matches your filters."}
                 </div>
               )}
 
@@ -678,7 +701,7 @@ export function App(): JSX.Element {
                           key={`${r.mediaType}-${r.tmdbId}`}
                           result={r}
                           providers={providers}
-                          watchlisted={r.watchlisted || isWatchlisted(r.mediaType, r.tmdbId)}
+                          watchlisted={isWatchlisted(r.mediaType, r.tmdbId)}
                           onToggleWatchlist={() =>
                             toggle({ mediaType: r.mediaType, tmdbId: r.tmdbId }, "watchlist")
                           }
@@ -711,7 +734,11 @@ export function App(): JSX.Element {
       )}
 
       {toast && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-panel2 text-sm text-ink px-4 py-2 rounded-lg shadow-lg ring-1 ring-white/10">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-panel2 text-sm text-ink px-4 py-2 rounded-lg shadow-lg ring-1 ring-white/10"
+        >
           {toast}
         </div>
       )}
@@ -726,7 +753,7 @@ export function App(): JSX.Element {
           activeId={profileState.activeId}
           status={status}
           onSync={onSync}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
         />
       )}
 
@@ -735,7 +762,7 @@ export function App(): JSX.Element {
           items={notifications}
           armedEntries={armedWatchlistEntries}
           providers={providers}
-          onClose={() => setNotificationsOpen(false)}
+          onClose={closeNotifications}
           onMarkRead={(id) => void markRead(id)}
           onMarkAllRead={() => void markAllRead()}
           onDismiss={(id) => void dismissNotification(id)}
@@ -767,89 +794,118 @@ function MobileFilters({
   canSurprise: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const close = (): void => setOpen(false);
+  const close = useCallback(() => setOpen(false), []);
   return (
     <>
       <button
         onClick={() => setOpen(true)}
+        aria-expanded={open}
         className="rounded-full bg-panel2 px-3 py-1 text-xs ring-1 ring-white/10 text-ink hover:ring-accent"
       >
         Filters{activeCount > 0 ? ` (${activeCount})` : ""}
       </button>
-      {open && createPortal(
-        <div className="fixed inset-0 z-40 bg-black/70" onClick={close}>
-          <div
-            className="absolute inset-y-0 left-0 w-80 bg-panel overflow-y-auto flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center p-4 border-b border-white/5">
-              <div className="font-medium">Menu</div>
-              <button onClick={close} className="text-mute hover:text-ink" aria-label="Close">
-                ✕
-              </button>
-            </div>
-            <div className="p-4 border-b border-white/5 space-y-3">
-              <div className="text-xs uppercase tracking-wider text-mute">View</div>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filters.hideSeen}
-                  onChange={(e) => onChange({ hideSeen: e.target.checked })}
-                  className="accent-accent"
-                />
-                Hide seen
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-mute shrink-0">Sort</span>
-                <select
-                  value={filters.sort}
-                  onChange={(e) => {
-                    const sort = e.target.value as SortKey;
-                    onChange(sort === "random" ? { sort, randomSeed: newSeed() } : { sort });
-                  }}
-                  className="flex-1 bg-panel2 rounded px-2 py-1.5 ring-1 ring-white/10 outline-none focus:ring-accent text-ink text-sm"
-                >
-                  {SORT_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                {filters.sort === "random" && (
-                  <button
-                    onClick={() => onChange({ randomSeed: newSeed() })}
-                    className="rounded px-2 py-1.5 bg-panel2 ring-1 ring-white/10 hover:ring-accent shrink-0"
-                    title="Reshuffle"
-                  >
-                    🔀
-                  </button>
-                )}
-              </div>
-            </div>
-            <FiltersPanel
-              filters={filters}
-              providers={providers}
-              genres={genres}
-              onChange={onChange}
-              onReset={onReset}
-            />
-            <div className="mt-auto p-4 border-t border-white/5 flex gap-2">
-              <button
-                onClick={() => {
-                  onSurprise();
-                  close();
-                }}
-                disabled={!canSurprise}
-                className="flex-1 rounded px-3 py-2 bg-panel2 ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-40"
-              >
-                🎲 Surprise me
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      {open && createPortal(<MobileDrawer onClose={close} {...{ filters, providers, genres, onChange, onReset, onSurprise, canSurprise }} />, document.body)}
     </>
+  );
+}
+
+function MobileDrawer({
+  filters,
+  providers,
+  genres,
+  onChange,
+  onReset,
+  onSurprise,
+  canSurprise,
+  onClose: close,
+}: {
+  filters: Filters;
+  providers: Provider[];
+  genres: Genre[];
+  onChange: (patch: Partial<Filters>) => void;
+  onReset: () => void;
+  onSurprise: () => void;
+  canSurprise: boolean;
+  onClose: () => void;
+}): JSX.Element {
+  const { panelRef, backdropProps } = useDialog<HTMLDivElement>(close);
+  return (
+    <div className="fixed inset-0 z-40 bg-black/70" {...backdropProps}>
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu"
+        className="absolute inset-y-0 left-0 w-80 bg-panel overflow-y-auto flex flex-col outline-none"
+      >
+        <div className="flex justify-between items-center p-4 border-b border-white/5">
+          <div className="font-medium">Menu</div>
+          <button onClick={close} className="text-mute hover:text-ink" aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="p-4 border-b border-white/5 space-y-3">
+          <div className="text-xs uppercase tracking-wider text-mute">View</div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filters.hideSeen}
+              onChange={(e) => onChange({ hideSeen: e.target.checked })}
+              className="accent-accent"
+            />
+            Hide seen
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-mute shrink-0">Sort</span>
+            <select
+              value={filters.sort}
+              onChange={(e) => {
+                const sort = e.target.value as SortKey;
+                onChange(sort === "random" ? { sort, randomSeed: newSeed() } : { sort });
+              }}
+              className="flex-1 bg-panel2 rounded px-2 py-1.5 ring-1 ring-white/10 outline-none focus:ring-accent text-ink text-sm"
+              aria-label="Sort order"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {filters.sort === "random" && (
+              <button
+                onClick={() => onChange({ randomSeed: newSeed() })}
+                className="rounded px-2 py-1.5 bg-panel2 ring-1 ring-white/10 hover:ring-accent shrink-0"
+                title="Reshuffle"
+                aria-label="Reshuffle"
+              >
+                🔀
+              </button>
+            )}
+          </div>
+        </div>
+        <FiltersPanel
+          filters={filters}
+          providers={providers}
+          genres={genres}
+          onChange={onChange}
+          onReset={onReset}
+        />
+        <div className="mt-auto p-4 border-t border-white/5 flex gap-2">
+          <button
+            onClick={() => {
+              onSurprise();
+              close();
+            }}
+            disabled={!canSurprise}
+            className="flex-1 rounded px-3 py-2 bg-panel2 ring-1 ring-white/10 hover:ring-accent text-sm disabled:opacity-40"
+          >
+            🎲 Surprise me
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -919,15 +975,4 @@ function SettingsIcon(): JSX.Element {
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
-}
-
-export function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.round(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return `${days}d ago`;
 }

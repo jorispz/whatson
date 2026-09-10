@@ -50,6 +50,14 @@ export interface Status {
 
 export type SortKey = "popularity" | "rating" | "year" | "title" | "random";
 
+export interface TitleDetails {
+  youtubeKey: string | null;
+  runtime: number | null;
+  certification: string | null;
+  seasonCount: number | null;
+  episodeCount: number | null;
+}
+
 export interface NotificationEntry {
   id: number;
   tmdbId: number;

@@ -30,6 +30,9 @@ function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: P
         tabIndex={0}
         onClick={() => onSelect(title)}
         onKeyDown={(e) => {
+          // Only react to keys on the card itself; the provider badges inside
+          // are real buttons and must keep their own Enter/Space activation.
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelect(title);
@@ -74,7 +77,9 @@ function TitleCardInner({ title, providers, markSet, onSelect, onToggleMark }: P
         </div>
       </div>
       </div>
-      <div className="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      {/* visibility (not opacity) so the hidden buttons aren't invisible tap
+          targets; on touch devices there is no hover, so show them always. */}
+      <div className="absolute top-2 left-2 flex gap-1 invisible group-hover:visible focus-within:visible [@media(hover:none)]:visible">
 
         <MarkButton
           active={!!markSet?.seen}
@@ -116,7 +121,9 @@ function MarkButton({
         onClick={(e) => {
           e.stopPropagation();
           onClick();
-          e.currentTarget.blur();
+          // Drop hover-pinning focus after a pointer click, but keep keyboard
+          // focus where it is (detail is 0 for keyboard activation).
+          if (e.detail !== 0) e.currentTarget.blur();
         }}
         aria-label={title}
         className={`h-7 w-7 rounded-full flex items-center justify-center text-xs shadow ring-1 ${
@@ -163,7 +170,7 @@ function ProviderBadge({ provider, title }: { provider: Provider; title: Title }
       ) : logo ? (
         <img src={logo} alt={provider.name} className="h-full w-full object-cover" />
       ) : (
-        <span className="text-[9px] text-mute w-full text-center">{provider.name.slice(0, 2)}</span>
+        <span className="text-[10px] text-mute w-full text-center">{provider.name.slice(0, 2)}</span>
       )}
     </button>
   );

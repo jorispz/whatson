@@ -10,7 +10,8 @@ export interface MarkSet {
 }
 export type Marks = Record<string, MarkSet>;
 
-// Marks live in the server DB, scoped to the default profile.
+// Marks live in the server DB, scoped to the active profile (api.ts sends the
+// profile header on every request).
 
 const titleKey = (t: Pick<Title, "mediaType" | "tmdbId">): string => `${t.mediaType}-${t.tmdbId}`;
 
@@ -79,6 +80,7 @@ export function useMarks(): {
     const nextEntry: MarkSet = { ...existing };
     if (existing[mark]) delete nextEntry[mark];
     else nextEntry[mark] = true;
+    const previous = current;
     const next = { ...current };
     if (nextEntry.watchlist || nextEntry.seen) next[key] = nextEntry;
     else delete next[key];
@@ -97,6 +99,14 @@ export function useMarks(): {
       })
       .catch((err) => {
         console.error("mark save failed:", err);
+        // Roll back the optimistic update so the UI doesn't drift from the
+        // server. Only if nothing else has changed the entry since.
+        if (current[key] === nextEntry || (!current[key] && !next[key])) {
+          current = { ...current };
+          if (previous[key]) current[key] = previous[key];
+          else delete current[key];
+          notify();
+        }
       });
   }, []);
 

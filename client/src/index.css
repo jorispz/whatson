@@ -28,6 +28,13 @@ body { background: #0b0d12; }
 .range-dual input[type="range"]:hover {
   z-index: 2;
 }
+/* The inputs have outline: none; show keyboard focus on the thumb instead. */
+.range-dual input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.5);
+}
+.range-dual input[type="range"]:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.5);
+}
 .range-dual input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   background: transparent;

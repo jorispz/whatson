@@ -50,6 +50,7 @@ export function useNotifications(): {
   }, []);
 
   const markRead = useCallback(async (id: number): Promise<void> => {
+    const prev = current;
     const now = new Date().toISOString();
     current = current.map((n) => (n.id === id && !n.readAt ? { ...n, readAt: now } : n));
     notify();
@@ -57,10 +58,13 @@ export function useNotifications(): {
       await api.notifications.markRead(id, true);
     } catch (err) {
       console.error("notification markRead failed:", err);
+      current = prev;
+      notify();
     }
   }, []);
 
   const markAllRead = useCallback(async (): Promise<void> => {
+    const prev = current;
     const now = new Date().toISOString();
     current = current.map((n) => (n.readAt ? n : { ...n, readAt: now }));
     notify();
@@ -68,6 +72,8 @@ export function useNotifications(): {
       await api.notifications.markAllRead();
     } catch (err) {
       console.error("notifications markAllRead failed:", err);
+      current = prev;
+      notify();
     }
   }, []);
 

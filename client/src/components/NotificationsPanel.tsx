@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { NotificationEntry, Provider, Title } from "../types";
 import { posterUrl } from "../api";
+import { relativeTime } from "../time";
 
 interface Props {
   items: NotificationEntry[];
@@ -63,6 +64,8 @@ export function NotificationsPanel({
   return createPortal(
     <div
       ref={ref}
+      role="dialog"
+      aria-label="Notifications"
       className="fixed inset-x-2 top-[60px] z-40 mx-auto max-w-md rounded-lg bg-panel ring-1 ring-white/10 shadow-xl overflow-hidden flex flex-col max-h-[80vh] sm:inset-auto sm:right-4 sm:top-[52px] sm:w-96"
     >
       <div className="flex-1 overflow-y-auto">
@@ -180,22 +183,4 @@ export function NotificationsPanel({
     </div>,
     document.body,
   );
-}
-
-function relativeTime(iso: string): string {
-  // SQLite datetime('now') returns "YYYY-MM-DD HH:MM:SS" in UTC without a Z;
-  // be lenient and treat that as UTC.
-  const normalized = iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`;
-  const then = new Date(normalized).getTime();
-  if (!Number.isFinite(then)) return "";
-  const diff = Date.now() - then;
-  const m = Math.round(diff / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d}d ago`;
-  const mo = Math.round(d / 30);
-  return `${mo}mo ago`;
 }
