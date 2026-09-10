@@ -41,22 +41,51 @@ interface TmdbPagedResponse<T> {
   results: T[];
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ATTEMPTS = 4;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function retryDelayMs(res: Response, attempt: number): number {
+  const header = res.headers.get("retry-after");
+  const secs = header ? Number(header) : NaN;
+  if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, 60_000);
+  return 500 * 2 ** (attempt - 1);
+}
+
+// One TMDB request with a timeout and bounded retries. A sync walks several
+// hundred pages, so a single transient 429/5xx or a stalled socket must not
+// abort the whole run. Network errors and timeouts are retried the same way.
 async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const url = new URL(`${BASE}${path}`);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${config.tmdbAccessToken}`,
-      Accept: "application/json",
-    },
-  });
-  if (!res.ok) {
+  const headers = {
+    Authorization: `Bearer ${config.tmdbAccessToken}`,
+    Accept: "application/json",
+  };
+  for (let attempt = 1; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS) {
+        throw new Error(`TMDB request failed for ${path} after ${attempt} attempts: ${String(err)}`);
+      }
+      await sleep(500 * 2 ** (attempt - 1));
+      continue;
+    }
+    if (res.ok) return (await res.json()) as T;
+    if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_ATTEMPTS) {
+      await res.text().catch(() => "");
+      await sleep(retryDelayMs(res, attempt));
+      continue;
+    }
     const body = await res.text().catch(() => "");
     throw new Error(`TMDB ${res.status} ${res.statusText} for ${path}: ${body}`);
   }
-  return (await res.json()) as T;
 }
 
 export async function fetchGenres(mediaType: MediaType): Promise<TmdbGenre[]> {
@@ -296,6 +325,11 @@ export async function discoverAllForProvider(
     });
     totalPages = res.total_pages;
     for (const item of res.results) seen.set(item.id, item);
+  }
+  if (totalPages > 500) {
+    console.warn(
+      `discover ${mediaType}/${providerId}: TMDB reports ${totalPages} pages but caps at 500; results are truncated`,
+    );
   }
   return [...seen.values()];
 }

@@ -38,23 +38,35 @@ function findProvider(list: TmdbProvider[], wantedName: string): TmdbProvider | 
   return list.find((p) => normalize(p.provider_name).includes(wanted));
 }
 
+/**
+ * Resolve the tracked providers' TMDB ids by name. Provider ids are shared
+ * across movie/tv, but TMDB's per-region lists are not always complete (the
+ * NL movie list has been observed to come back empty while the tv list was
+ * fine), so both are merged. A provider missing from both falls back to the
+ * row stored by the previous sync, so a TMDB data hiccup on one endpoint
+ * doesn't block refreshing the whole catalog.
+ */
 async function resolveProviders(): Promise<ResolvedProvider[]> {
-  // Provider IDs are shared across movie/tv in TMDB's catalog, but we fetch the movie list
-  // because it's the most comprehensive for NL.
-  const list = await fetchProvidersForRegion("movie");
+  const [movies, tv] = await Promise.all([fetchProvidersForRegion("movie"), fetchProvidersForRegion("tv")]);
+  const byId = new Map<number, TmdbProvider>();
+  for (const p of [...movies, ...tv]) byId.set(p.provider_id, p);
+  const list = [...byId.values()];
+
+  const stored = db.prepare("SELECT id, key, name, logo_path FROM providers WHERE key = ?");
   const resolved: ResolvedProvider[] = [];
   for (const key of PROVIDER_KEYS) {
     const wanted = config.providerNames[key];
     const found = findProvider(list, wanted);
-    if (!found) {
+    if (found) {
+      resolved.push({ key, id: found.provider_id, name: found.provider_name, logo_path: found.logo_path });
+      continue;
+    }
+    const previous = stored.get(key) as Omit<ResolvedProvider, "key"> | undefined;
+    if (!previous) {
       throw new Error(`Could not resolve provider "${wanted}" in TMDB region ${config.region}`);
     }
-    resolved.push({
-      key,
-      id: found.provider_id,
-      name: found.provider_name,
-      logo_path: found.logo_path,
-    });
+    console.warn(`sync: "${wanted}" missing from TMDB's ${config.region} provider lists; reusing stored id ${previous.id}`);
+    resolved.push({ key, ...previous });
   }
   return resolved;
 }
@@ -134,70 +146,47 @@ export function persistTitle(
 }
 
 /**
- * For each watchlist mark whose title isn't on any tracked streamer right
- * now, fetch the full title metadata from TMDB and persist it (without an
- * availability row). Keeps popularity / rating / release_year etc. fresh on
- * watchlist-only entries so the watchlist sorts correctly and any legacy
- * orphan marks heal naturally on the next sync.
- *
- * Runs after the provider refill (so we know which titles still need
- * fetching) and before fireWatchlistArrivals (so arrival selection reads
- * fresh catalog rows).
+ * Fetch full TMDB metadata for every watchlist title that the provider walks
+ * did not cover — i.e. titles people are tracking that aren't on any tracked
+ * streamer right now. Keeps popularity / rating / release_year fresh on
+ * watchlist-only entries so the watchlist sorts correctly, and heals legacy
+ * orphan marks. Failures are logged and skipped: one missing TMDB entry
+ * shouldn't take down the whole sync.
  */
-async function refreshWatchlistOnlyTitles(): Promise<void> {
+async function fetchWatchlistOnlyTitles(
+  covered: Set<string>,
+): Promise<{ mediaType: MediaType; item: TmdbDiscoverResult }[]> {
   const rows = db
-    .prepare(
-      `
-      SELECT DISTINCT m.media_type, m.tmdb_id
-      FROM marks m
-      WHERE m.watchlist = 1
-        AND NOT EXISTS (
-          SELECT 1 FROM availability a
-          WHERE a.media_type = m.media_type AND a.tmdb_id = m.tmdb_id
-        )
-    `,
-    )
+    .prepare("SELECT DISTINCT media_type, tmdb_id FROM marks WHERE watchlist = 1")
     .all() as { media_type: MediaType; tmdb_id: number }[];
-  if (rows.length === 0) return;
-  let ok = 0;
+  const out: { mediaType: MediaType; item: TmdbDiscoverResult }[] = [];
   let failed = 0;
   for (const { media_type, tmdb_id } of rows) {
+    if (covered.has(`${media_type}:${tmdb_id}`)) continue;
     try {
-      const full = await fetchTitleFull(media_type, tmdb_id);
-      persistTitle(full, media_type);
-      ok++;
+      out.push({ mediaType: media_type, item: await fetchTitleFull(media_type, tmdb_id) });
     } catch (err) {
       failed++;
       console.error(`watchlist refresh: ${media_type}/${tmdb_id} failed:`, err);
     }
   }
-  console.log(`watchlist refresh: ${ok} ok${failed ? `, ${failed} failed` : ""}`);
+  if (out.length > 0 || failed > 0) {
+    console.log(`watchlist refresh: ${out.length} ok${failed ? `, ${failed} failed` : ""}`);
+  }
+  return out;
 }
 
-async function syncGenres(): Promise<void> {
-  const insert = db.prepare(`
-    INSERT INTO genres (id, media_type, name) VALUES (?, ?, ?)
-    ON CONFLICT(id, media_type) DO UPDATE SET name = excluded.name
-  `);
-  const mediaTypes: MediaType[] = ["movie", "tv"];
-  for (const mt of mediaTypes) {
-    const genres = await fetchGenres(mt);
-    const tx = db.transaction((rows: typeof genres) => {
-      for (const g of rows) insert.run(g.id, mt, g.name);
-    });
-    tx(genres);
-  }
-}
+const upsertGenre = db.prepare(`
+  INSERT INTO genres (id, media_type, name) VALUES (?, ?, ?)
+  ON CONFLICT(id, media_type) DO UPDATE SET name = excluded.name
+`);
 
 function upsertProviders(providers: ResolvedProvider[]): void {
   const insert = db.prepare(`
     INSERT INTO providers (id, key, name, logo_path) VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET key = excluded.key, name = excluded.name, logo_path = excluded.logo_path
   `);
-  const tx = db.transaction((rows: ResolvedProvider[]) => {
-    for (const p of rows) insert.run(p.id, p.key, p.name, p.logo_path);
-  });
-  tx(providers);
+  for (const p of providers) insert.run(p.id, p.key, p.name, p.logo_path);
 }
 
 export interface SyncProgress {
@@ -227,61 +216,80 @@ export function triggerSync(onProgress?: (p: SyncProgress) => void): Promise<Syn
   return inFlight;
 }
 
+interface ProviderWalk {
+  provider: ResolvedProvider;
+  mediaType: MediaType;
+  items: TmdbDiscoverResult[];
+}
+
+/**
+ * Two phases. Everything that talks to TMDB happens first and touches nothing
+ * in the database; then the catalog is rebuilt inside a single transaction.
+ * A failed or interrupted fetch therefore leaves the previous catalog intact,
+ * and readers never observe the half-rebuilt state that a delete-then-refill
+ * across awaits would expose.
+ */
 async function runSync(onProgress?: (p: SyncProgress) => void): Promise<SyncResult> {
   const started = Date.now();
 
   const providers = await resolveProviders();
-  upsertProviders(providers);
+  const genres = await Promise.all(
+    (["movie", "tv"] as MediaType[]).map(async (mt) => ({ mediaType: mt, list: await fetchGenres(mt) })),
+  );
 
-  await syncGenres();
-
-  // Clear availability so titles that left a service disappear.
-  db.prepare("DELETE FROM availability").run();
-
+  const walks: ProviderWalk[] = [];
+  const covered = new Set<string>();
   for (const provider of providers) {
     for (const mediaType of ["movie", "tv"] as MediaType[]) {
       const items = await discoverAllForProvider(mediaType, provider.id);
-      const tx = db.transaction((rows: TmdbDiscoverResult[]) => {
-        for (const row of rows) persistTitle(row, mediaType, provider.id);
-      });
-      tx(items);
+      walks.push({ provider, mediaType, items });
+      for (const item of items) covered.add(`${mediaType}:${item.id}`);
       onProgress?.({ provider: provider.name, mediaType, count: items.length });
     }
   }
+  const watchlistOnly = await fetchWatchlistOnlyTitles(covered);
 
-  // Refresh metadata for every watchlist title that the provider walks didn't
-  // touch — i.e. titles people are tracking that aren't on any tracked
-  // streamer right now. Fetched one-by-one from TMDB so popularity / rating /
-  // genre stays current. Failures are logged and skipped: one missing TMDB
-  // entry shouldn't take down the whole sync.
-  await refreshWatchlistOnlyTitles();
+  const rebuild = db.transaction((): { totalTitles: number; totalAvailability: number } => {
+    upsertProviders(providers);
+    for (const { mediaType, list } of genres) {
+      for (const g of list) upsertGenre.run(g.id, mediaType, g.name);
+    }
 
-  fireWatchlistArrivals();
+    // Clear availability so titles that left a service disappear.
+    db.prepare("DELETE FROM availability").run();
+    for (const { provider, mediaType, items } of walks) {
+      for (const item of items) persistTitle(item, mediaType, provider.id);
+    }
+    for (const { mediaType, item } of watchlistOnly) persistTitle(item, mediaType);
 
-  // Prune titles that no longer have any availability AND aren't backed by a
-  // watchlist mark. Watchlist-only titles intentionally live in the catalog
-  // (without availability rows) so the watchlist grid can sort/filter on real
-  // popularity / rating / year data.
-  db.prepare(`
-    DELETE FROM titles
-    WHERE NOT EXISTS (
-      SELECT 1 FROM availability a
-      WHERE a.tmdb_id = titles.tmdb_id AND a.media_type = titles.media_type
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM marks m
-      WHERE m.watchlist = 1
-        AND m.tmdb_id = titles.tmdb_id AND m.media_type = titles.media_type
-    )
-  `).run();
+    fireWatchlistArrivals();
 
-  const totalTitles = (db.prepare("SELECT COUNT(*) AS n FROM titles").get() as { n: number }).n;
-  const totalAvailability = (db.prepare("SELECT COUNT(*) AS n FROM availability").get() as { n: number }).n;
+    // Prune titles that no longer have any availability AND aren't backed by
+    // a watchlist mark. Watchlist-only titles intentionally live in the
+    // catalog (without availability rows) so the watchlist grid can sort and
+    // filter on real popularity / rating / year data.
+    db.prepare(`
+      DELETE FROM titles
+      WHERE NOT EXISTS (
+        SELECT 1 FROM availability a
+        WHERE a.tmdb_id = titles.tmdb_id AND a.media_type = titles.media_type
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM marks m
+        WHERE m.watchlist = 1
+          AND m.tmdb_id = titles.tmdb_id AND m.media_type = titles.media_type
+      )
+    `).run();
+
+    const totalTitles = (db.prepare("SELECT COUNT(*) AS n FROM titles").get() as { n: number }).n;
+    const totalAvailability = (db.prepare("SELECT COUNT(*) AS n FROM availability").get() as { n: number }).n;
+    setMeta("last_sync_at", new Date().toISOString());
+    setMeta("last_sync_duration_ms", String(Date.now() - started));
+    setMeta("last_sync_titles", String(totalTitles));
+    return { totalTitles, totalAvailability };
+  });
+  const { totalTitles, totalAvailability } = rebuild();
   const durationMs = Date.now() - started;
-
-  setMeta("last_sync_at", new Date().toISOString());
-  setMeta("last_sync_duration_ms", String(durationMs));
-  setMeta("last_sync_titles", String(totalTitles));
 
   // Sync rewrites availability and a chunk of titles; reload the hot read
   // pages so the first /api/titles after a sync isn't cold.
