@@ -98,4 +98,6 @@ export interface Filters {
   randomSeed: number;
   hideSeen: boolean;
   watchlistOnly: boolean;
+  /** Watchlist mode only: hide entries that have left every tracked streamer. */
+  availableOnly: boolean;
 }

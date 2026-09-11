@@ -49,6 +49,7 @@ const DEFAULT_FILTERS: Filters = {
   randomSeed: dateSeed(),
   hideSeen: false,
   watchlistOnly: false,
+  availableOnly: true,
 };
 
 export function App(): JSX.Element {
@@ -95,11 +96,12 @@ export function App(): JSX.Element {
   } = useNotifications();
 
   // Fingerprint of the filter fields that actually drive the server query.
-  // hideSeen is a pure client-side filter — toggling it shouldn't refetch or
-  // scroll the grid back to the top. watchlistOnly stays in the signature so
-  // switching modes re-queries (and scrolls to top) like any other change.
+  // hideSeen and availableOnly are pure client-side filters — toggling them
+  // shouldn't refetch or scroll the grid back to the top. watchlistOnly stays
+  // in the signature so switching modes re-queries (and scrolls to top) like
+  // any other change.
   const queryFilterSig = useMemo(() => {
-    const { hideSeen: _hideSeen, ...rest } = filters;
+    const { hideSeen: _hideSeen, availableOnly: _availableOnly, ...rest } = filters;
     return JSON.stringify(rest);
   }, [filters]);
 
@@ -251,11 +253,24 @@ export function App(): JSX.Element {
   // What the grid renders. Watchlist mode is served by the shared watchlist
   // store, which marks.ts refreshes only after the server has acknowledged a
   // flag change, so the grid can never show a set the server has moved past.
+  //
+  // availableOnly is applied here rather than in visibleResults so the title
+  // count in the top bar reflects it: in Watchlist mode the whole set is local,
+  // so total and results can stay consistent at no cost.
+  const shownWatchlistEntries = useMemo(
+    () => (filters.availableOnly ? watchlistEntries.filter((e) => e.isAvailable !== false) : watchlistEntries),
+    [filters.availableOnly, watchlistEntries],
+  );
   const gridData = useMemo((): TitlesResponse | null => {
     if (!filters.watchlistOnly) return data;
     if (!watchlistReady) return null;
-    return { total: watchlistEntries.length, limit: watchlistEntries.length, offset: 0, results: watchlistEntries };
-  }, [filters.watchlistOnly, data, watchlistReady, watchlistEntries]);
+    return {
+      total: shownWatchlistEntries.length,
+      limit: shownWatchlistEntries.length,
+      offset: 0,
+      results: shownWatchlistEntries,
+    };
+  }, [filters.watchlistOnly, data, watchlistReady, shownWatchlistEntries]);
   const gridLoading = filters.watchlistOnly ? !watchlistReady : loading;
 
   const loadMore = useCallback(async (): Promise<void> => {
@@ -376,7 +391,7 @@ export function App(): JSX.Element {
       const notSeen = (t: Title): boolean => !marks[`${t.mediaType}-${t.tmdbId}`]?.seen;
       let pool: Title[];
       if (filters.watchlistOnly) {
-        pool = filters.hideSeen ? watchlistEntries.filter(notSeen) : watchlistEntries;
+        pool = filters.hideSeen ? shownWatchlistEntries.filter(notSeen) : shownWatchlistEntries;
       } else {
         const excludeIds = filters.hideSeen
           ? Object.entries(marks)
@@ -391,7 +406,7 @@ export function App(): JSX.Element {
     } catch (err) {
       console.error(err);
     }
-  }, [filters, watchlistEntries, marks, openModal]);
+  }, [filters, shownWatchlistEntries, marks, openModal]);
   const closeModal = useCallback(() => {
     if ((window.history.state as { whatsonModal?: boolean } | null)?.whatsonModal) {
       // popstate fires from history.back(); that handler clears `selected`.
@@ -449,6 +464,8 @@ export function App(): JSX.Element {
   // Hide seen can blank out a whole page while more pages exist; say so
   // instead of claiming nothing matches.
   const allHiddenBySeen = isEmpty && gridData !== null && gridData.results.length > 0;
+  const allHiddenByAvailability =
+    isEmpty && filters.watchlistOnly && filters.availableOnly && watchlistEntries.length > 0;
   const needsSync = !loading && status && status.titleCount === 0 && !status.syncing;
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -542,6 +559,24 @@ export function App(): JSX.Element {
               />
               Hide seen
             </label>
+            {filters.watchlistOnly && (
+              <label
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 cursor-pointer ${
+                  filters.availableOnly
+                    ? "bg-emerald-500/20 ring-emerald-500 text-ink"
+                    : "bg-panel2 ring-white/10 hover:text-ink hover:ring-white/30"
+                }`}
+                title="Hide watchlist entries that are not on any streamer right now"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.availableOnly}
+                  onChange={(e) => updateFilters({ availableOnly: e.target.checked })}
+                  className="accent-accent"
+                />
+                Available now
+              </label>
+            )}
             <select
               value={filters.sort}
               onChange={(e) => {
@@ -642,7 +677,11 @@ export function App(): JSX.Element {
             <>
               {isEmpty && (
                 <div className="rounded-lg bg-panel p-8 text-center text-mute">
-                  {allHiddenBySeen ? "Everything on this page is marked as seen." : "Nothing matches your filters."}
+                  {allHiddenBySeen
+                    ? "Everything on this page is marked as seen."
+                    : allHiddenByAvailability
+                      ? "Nothing on your watchlist is streaming right now."
+                      : "Nothing matches your filters."}
                 </div>
               )}
 
@@ -856,6 +895,17 @@ function MobileDrawer({
             />
             Hide seen
           </label>
+          {filters.watchlistOnly && (
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.availableOnly}
+                onChange={(e) => onChange({ availableOnly: e.target.checked })}
+                className="accent-accent"
+              />
+              Available now
+            </label>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-sm text-mute shrink-0">Sort</span>
             <select
