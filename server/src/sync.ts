@@ -10,7 +10,7 @@ import {
   type TmdbProvider,
 } from "./tmdb.js";
 
-const PROVIDER_KEYS = ["netflix", "disneyPlus", "hboMax", "ziggoTv"] as const;
+const PROVIDER_KEYS = ["netflix", "disneyPlus", "hboMax", "ziggoTv", "primeVideo"] as const;
 type ProviderKey = (typeof PROVIDER_KEYS)[number];
 
 interface ResolvedProvider {

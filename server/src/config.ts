@@ -17,6 +17,7 @@ export const config = {
     disneyPlus: "Disney Plus",
     hboMax: "HBO Max",
     ziggoTv: "Ziggo TV",
+    primeVideo: "Amazon Prime Video",
   },
   autoSyncHours: Number(process.env.AUTO_SYNC_HOURS ?? 24),
   autoSyncEnabled: (process.env.AUTO_SYNC ?? "true").toLowerCase() !== "false",

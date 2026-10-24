@@ -166,9 +166,9 @@ export const api = {
 export const posterUrl = (path: string | null, size: "w185" | "w342" | "w500" = "w342"): string | null =>
   path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
 
-// Fallback URLs used if the on-click deep-link resolver fails. Netflix and Max
-// honor search query params; Disney+'s SPA drops them, so we fall back to TMDB's
-// JustWatch-powered watch page for that one.
+// Fallback URLs used if the on-click deep-link resolver fails. Netflix, Max and
+// Prime Video honor search query params; Disney+'s SPA drops them, so we fall
+// back to TMDB's JustWatch-powered watch page for that one.
 export function serviceSearchUrl(
   providerKey: string,
   title: { title: string; tmdbId: number; mediaType: "movie" | "tv" },
@@ -178,6 +178,8 @@ export function serviceSearchUrl(
       return `https://www.netflix.com/search?q=${encodeURIComponent(title.title)}`;
     case "hboMax":
       return `https://play.max.com/search/result?q=${encodeURIComponent(title.title)}`;
+    case "primeVideo":
+      return `https://www.primevideo.com/search?phrase=${encodeURIComponent(title.title)}`;
     case "disneyPlus":
     case "ziggoTv":
       return `https://www.themoviedb.org/${title.mediaType}/${title.tmdbId}/watch?locale=NL`;

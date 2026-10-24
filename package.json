@@ -2,7 +2,7 @@
   "name": "whatson",
   "private": true,
   "version": "0.1.0",
-  "description": "Browse what's on Netflix, Disney+ and HBO Max NL",
+  "description": "Browse what's on Netflix, Disney+, HBO Max and Prime Video NL",
   "workspaces": [
     "server",
     "client"

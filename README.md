@@ -1,11 +1,11 @@
 # whatson
 
-Local web app to browse what's available on your Netflix, Disney+, HBO Max, and Ziggo TV subscriptions in the Netherlands. Data from TMDB.
+Local web app to browse what's available on your Netflix, Disney+, HBO Max, Ziggo TV, and Amazon Prime Video subscriptions in the Netherlands. Data from TMDB.
 
 ![whatson screenshot](docs/screenshot.png)
 
 > Personal, non-commercial project. Not affiliated with or endorsed by
-> Netflix, Disney+, HBO Max, Ziggo, or TMDB. All service names, logos, and
+> Netflix, Disney+, HBO Max, Ziggo, Amazon, or TMDB. All service names, logos, and
 > title artwork are the property of their respective owners.
 
 ## Why

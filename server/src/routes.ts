@@ -348,6 +348,10 @@ const PROVIDER_SITES: Record<string, ProviderSite> = {
     hosts: ["ziggo.tv", "ziggogo.tv"],
     search: (q) => `https://www.ziggogo.tv/search?q=${encodeURIComponent(q)}`,
   },
+  primeVideo: {
+    hosts: ["primevideo.com", "amazon.com", "amazon.nl"],
+    search: (q) => `https://www.primevideo.com/search?phrase=${encodeURIComponent(q)}`,
+  },
 };
 
 // The clickout target and its redirect chain come from third-party HTML, so
